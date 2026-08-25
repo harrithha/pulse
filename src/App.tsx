@@ -164,6 +164,8 @@ function SearchIcon() {
   )
 }
 
+const ACCENT_GRADIENT = 'linear-gradient(135deg, #F5A623 0%, #EA580C 78%)'
+
 function Tag({ label, active, onClick }: { label: string; active: boolean; onClick: () => void }) {
   return (
     <button
@@ -171,7 +173,7 @@ function Tag({ label, active, onClick }: { label: string; active: boolean; onCli
       className="px-3 sm:px-4 py-2 rounded-full text-sm transition-all duration-150 min-h-10"
       style={
         active
-          ? { background: '#EA580C', color: '#FFFFFF', fontWeight: 600 }
+          ? { backgroundImage: ACCENT_GRADIENT, color: '#FFFFFF', fontWeight: 600, border: '1px solid transparent' }
           : { background: '#17172A', color: '#B8B4AC', border: '1px solid rgba(255,255,255,0.08)' }
       }
     >
@@ -183,7 +185,13 @@ function Tag({ label, active, onClick }: { label: string; active: boolean; onCli
 function PulseMark({ size = 22 }: { size?: number }) {
   return (
     <svg width={size} height={size} viewBox="0 0 32 32" fill="none" aria-hidden style={{ display: 'block', flexShrink: 0 }}>
-      <rect width="32" height="32" rx="9" fill="#EA580C" />
+      <defs>
+        <linearGradient id="pulseMarkGrad" x1="0" y1="0" x2="32" y2="32">
+          <stop offset="0%" stopColor="#F5A623" />
+          <stop offset="100%" stopColor="#EA580C" />
+        </linearGradient>
+      </defs>
+      <rect width="32" height="32" rx="9" fill="url(#pulseMarkGrad)" />
       <path
         d="M4.8 16.5h5.6L12.4 7.4 16.8 24.6 19.4 16.5H25.6"
         stroke="#FFF7F2"
@@ -242,9 +250,10 @@ function SiteHeader({
             onClick={() => onNavigate('profile')}
             className="px-3 py-1.5 rounded-lg text-xs sm:text-sm min-h-9 whitespace-nowrap"
             style={{
-              color: editing ? '#F5A623' : '#C4B9A8',
-              border: editing ? '1px solid rgba(245,166,35,0.45)' : '1px solid rgba(255,255,255,0.1)',
-              background: editing ? 'rgba(245,166,35,0.12)' : '#17172A',
+              color: editing ? '#FFFFFF' : '#C4B9A8',
+              backgroundImage: editing ? ACCENT_GRADIENT : 'none',
+              backgroundColor: editing ? undefined : '#17172A',
+              border: editing ? '1px solid transparent' : '1px solid rgba(255,255,255,0.1)',
               fontWeight: 600,
             }}
           >
@@ -299,7 +308,7 @@ function OnboardingLocation({
           onClick={onNext}
           disabled={selected.size === 0}
           className="w-full sm:w-auto px-8 py-4 rounded-xl text-base font-semibold min-h-12"
-          style={{ background: '#EA580C', color: '#FFFFFF', opacity: selected.size === 0 ? 0.35 : 1 }}
+          style={{ backgroundImage: ACCENT_GRADIENT, color: '#FFFFFF', opacity: selected.size === 0 ? 0.35 : 1 }}
         >
           Continue →
         </button>
@@ -328,7 +337,7 @@ function OnboardingTopics({
         <div className="flex flex-wrap gap-2 mb-6">
           {TOPICS.map(t => <Tag key={t} label={t} active={selected.has(t)} onClick={() => onToggle(t)} />)}
         </div>
-        <button onClick={onDone} className="w-full sm:w-auto px-8 py-4 rounded-xl text-base font-semibold min-h-12" style={{ background: '#EA580C', color: '#FFFFFF' }}>
+        <button onClick={onDone} className="w-full sm:w-auto px-8 py-4 rounded-xl text-base font-semibold min-h-12" style={{ backgroundImage: ACCENT_GRADIENT, color: '#FFFFFF' }}>
           Load today’s edition →
         </button>
       </div>
@@ -528,7 +537,7 @@ function HomePage({
                   onClick={toggleAudio}
                   disabled={!edition.brief.sections.length}
                   className="inline-flex items-center justify-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold min-h-10"
-                  style={{ background: '#EA580C', color: '#FFFFFF', opacity: edition.brief.sections.length ? 1 : 0.4 }}
+                  style={{ backgroundImage: ACCENT_GRADIENT, color: '#FFFFFF', opacity: edition.brief.sections.length ? 1 : 0.4 }}
                 >
                   {audioOn ? <PauseIcon fill="#FFFFFF" /> : <PlayIcon fill="#FFFFFF" />}
                   {audioBusy ? 'Starting…' : audioOn ? 'Stop brief' : 'Today’s brief'}
@@ -700,9 +709,10 @@ function StoryPage({ story, onBack }: { story: StoryCard; onBack: () => void }) 
         disabled={!canListen}
         className="inline-flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-semibold mb-8 min-h-10"
         style={{
-          background: listening ? '#EA580C' : '#17172A',
+          backgroundImage: listening ? ACCENT_GRADIENT : 'none',
+          backgroundColor: listening ? undefined : '#17172A',
           color: '#EEE8E0',
-          border: listening ? 'none' : '1px solid rgba(255,255,255,0.12)',
+          border: listening ? '1px solid transparent' : '1px solid rgba(255,255,255,0.12)',
           opacity: canListen ? 1 : 0.4,
         }}
       >
@@ -751,40 +761,39 @@ function ProfilePage({
   locations,
   topics,
   fetchedAt,
-  onEditLocations,
-  onEditTopics,
+  onToggleLoc,
+  onToggleTopic,
 }: {
   locations: string[]
   topics: string[]
   fetchedAt: string
-  onEditLocations: () => void
-  onEditTopics: () => void
+  onToggleLoc: (s: string) => void
+  onToggleTopic: (s: string) => void
 }) {
+  const locSet = new Set(locations)
+  const topicSet = new Set(topics)
   return (
     <div className="max-w-[760px] mx-auto px-4 sm:px-6 lg:px-8 py-8 sm:py-10 pb-10">
       <h1 className="font-serif text-[#EEE8E0] text-[32px] sm:text-[40px] mb-2">Edit topics</h1>
-      <p className="text-sm mb-8" style={{ color: '#9B968F' }}>Pick the cities and topics that show up on Home.</p>
+      <p className="text-sm mb-8" style={{ color: '#9B968F' }}>Tap a chip to add or remove it from Home.</p>
       <div className="rounded-2xl p-5 mb-4" style={{ background: '#141424', border: '1px solid rgba(255,255,255,0.06)' }}>
-        <div className="flex items-center justify-between mb-3">
-          <div className="text-[10px] font-semibold tracking-[0.22em] uppercase" style={{ color: '#8A8AA0' }}>Locations</div>
-          <button onClick={onEditLocations} className="text-xs" style={{ color: '#F5A623' }}>Edit</button>
+        <div className="text-[10px] font-semibold tracking-[0.22em] uppercase mb-3" style={{ color: '#8A8AA0' }}>Cities</div>
+        <div className="flex flex-wrap gap-2 mb-6">
+          {CITIES.map(c => <Tag key={c} label={c} active={locSet.has(c)} onClick={() => onToggleLoc(c)} />)}
         </div>
+        <div className="text-[10px] font-semibold tracking-[0.22em] uppercase mb-3" style={{ color: '#8A8AA0' }}>States & regions</div>
+        <div className="flex flex-wrap gap-2 mb-6">
+          {STATES.map(s => <Tag key={s} label={s} active={locSet.has(s)} onClick={() => onToggleLoc(s)} />)}
+        </div>
+        <div className="text-[10px] font-semibold tracking-[0.22em] uppercase mb-3" style={{ color: '#8A8AA0' }}>Broader coverage</div>
         <div className="flex flex-wrap gap-2">
-          {locations.map(loc => (
-            <span key={loc} className="px-3 py-1.5 rounded-full text-sm" style={{ background: '#17172A', color: '#EEE8E0' }}>{loc}</span>
-          ))}
+          {['India', 'World'].map(g => <Tag key={g} label={g} active={locSet.has(g)} onClick={() => onToggleLoc(g)} />)}
         </div>
       </div>
       <div className="rounded-2xl p-5 mb-4" style={{ background: '#141424', border: '1px solid rgba(255,255,255,0.06)' }}>
-        <div className="flex items-center justify-between mb-3">
-          <div className="text-[10px] font-semibold tracking-[0.22em] uppercase" style={{ color: '#8A8AA0' }}>Topics</div>
-          <button onClick={onEditTopics} className="text-xs" style={{ color: '#F5A623' }}>Edit</button>
-        </div>
+        <div className="text-[10px] font-semibold tracking-[0.22em] uppercase mb-3" style={{ color: '#8A8AA0' }}>Topics</div>
         <div className="flex flex-wrap gap-2">
-          {topics.length === 0 && <span className="text-sm" style={{ color: '#8A8AA0' }}>No extra topics</span>}
-          {topics.map(t => (
-            <span key={t} className="px-3 py-1.5 rounded-full text-sm" style={{ background: '#17172A', color: '#EEE8E0' }}>{t}</span>
-          ))}
+          {TOPICS.map(t => <Tag key={t} label={t} active={topicSet.has(t)} onClick={() => onToggleTopic(t)} />)}
         </div>
       </div>
       <div className="rounded-2xl p-5" style={{ background: '#141424', border: '1px solid rgba(255,255,255,0.06)' }}>
@@ -918,6 +927,7 @@ export default function App() {
     setSelLoc(prev => {
       const n = new Set(prev)
       n.has(loc) ? n.delete(loc) : n.add(loc)
+      if (!n.size) return prev
       return n
     })
 
@@ -996,8 +1006,8 @@ export default function App() {
           locations={[...selLoc]}
           topics={[...selTopics]}
           fetchedAt={edition.fetchedAt}
-          onEditLocations={() => pushRoute('onboarding-location')}
-          onEditTopics={() => pushRoute('onboarding-topics')}
+          onToggleLoc={toggleLoc}
+          onToggleTopic={toggleTopic}
         />
       )}
       {screen === 'story' && activeStory && (
