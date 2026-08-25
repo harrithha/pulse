@@ -13,6 +13,18 @@ const NAV_ITEMS: { id: Tab; label: string }[] = [
   { id: 'profile', label: 'Profile' },
 ]
 
+function dayGreeting(at = new Date()) {
+  const hour = at.getHours()
+  if (hour >= 5 && hour < 12) return 'Good morning'
+  if (hour >= 12 && hour < 17) return 'Good afternoon'
+  return 'Good evening'
+}
+
+function liveBriefOpener(script: string) {
+  if (!/^Good (morning|afternoon|evening)\b/i.test(script)) return script
+  return `${dayGreeting()}. Here is today's Pulse.`
+}
+
 function findStory(edition: NewsPayload, id: string) {
   for (const shelf of edition.shelves) {
     const hit = shelf.stories.find(s => s.id === id)
@@ -495,7 +507,7 @@ function HomePage({
     void loadTtsStatus()
   }, [])
   useEffect(() => {
-    const opener = edition.brief.sections[0]?.script
+    const opener = liveBriefOpener(edition.brief.sections[0]?.script || '')
     if (!opener) return
     const t = window.setTimeout(() => {
       void fetch(`/api/tts?speak=${encodeURIComponent(opener)}`).then(r => r.arrayBuffer()).catch(() => undefined)
@@ -511,7 +523,10 @@ function HomePage({
       return
     }
     const sections = edition.brief.sections
-      .map(s => s.script.replace(/\s+/g, ' ').trim())
+      .map((s, i) => {
+        const script = s.script.replace(/\s+/g, ' ').trim()
+        return i === 0 ? liveBriefOpener(script) : script
+      })
       .filter(Boolean)
       .map(script => ({ script }))
     if (!canSpeak() || !sections.length) return

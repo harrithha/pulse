@@ -776,10 +776,26 @@ function topicIntro(name: string, count: number) {
   return count === 1 ? `The top story from ${name} is.` : `The top ${n} stories from ${name} are.`
 }
 
+function indiaHour(at = new Date()) {
+  const raw = new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Asia/Kolkata',
+    hour: 'numeric',
+    hourCycle: 'h23',
+  })
+    .formatToParts(at)
+    .find(part => part.type === 'hour')?.value
+  return Number(raw)
+}
+
+function dayGreeting(hour = indiaHour()) {
+  if (hour >= 5 && hour < 12) return 'Good morning'
+  if (hour >= 12 && hour < 17) return 'Good afternoon'
+  return 'Good evening'
+}
+
 function buildBrief(shelves: Array<{ label: string; stories: Story[] }>) {
   const used = new Set<string>()
-  const hour = new Date().getHours()
-  const hello = hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening'
+  const hello = dayGreeting()
   const sections: BriefSection[] = [
     {
       id: 'open',
