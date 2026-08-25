@@ -1,0 +1,1032 @@
+import type { IncomingMessage, ServerResponse } from 'node:http'
+import type { Plugin, PreviewServer, ViteDevServer } from 'vite'
+import { handleTts, type TtsOptions } from './pulse-tts'
+import { cleanArticleParagraphs, isJunkParagraph } from './src/lib/articleText'
+
+const UA =
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'
+
+const FETCH_HEADERS = {
+  'User-Agent': UA,
+  Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+  'Accept-Language': 'en-IN,en;q=0.9',
+  Referer: 'https://www.google.com/',
+}
+
+const STOP = new Set(
+  'a an the in on of for to and as at by from with after over into about after before under up down out off this that these those is are was were be been being it its their his her they we you your our not no or but if than then so just more most new also will can could would should into across amid amid amid'.split(
+    ' ',
+  ),
+)
+
+const TOPIC_FEEDS: Record<string, { kind: 'topic' | 'search'; value: string }> = {
+  Technology: { kind: 'topic', value: 'TECHNOLOGY' },
+  AI: { kind: 'search', value: '"artificial intelligence" OR ChatGPT OR OpenAI when:1d' },
+  Business: { kind: 'topic', value: 'BUSINESS' },
+  Startups: { kind: 'search', value: 'startup India when:1d' },
+  Sports: { kind: 'topic', value: 'SPORTS' },
+  Entertainment: { kind: 'topic', value: 'ENTERTAINMENT' },
+  Science: { kind: 'topic', value: 'SCIENCE' },
+  Politics: { kind: 'search', value: 'India politics OR parliament when:1d' },
+  Finance: { kind: 'search', value: 'Sensex OR Nifty OR RBI OR markets India when:1d' },
+}
+
+type Feed = { shelf: string; url: string; publisher?: string }
+
+const ALLOWED_HOSTS = [
+  'timesofindia.indiatimes.com',
+  'blogs.timesofindia.indiatimes.com',
+  'ndtv.com',
+  'indianexpress.com',
+  'livemint.com',
+  'economictimes.indiatimes.com',
+  'cnbctv18.com',
+  'cnbc.com',
+]
+
+const GOOGLE_SITES =
+  'site:timesofindia.indiatimes.com OR site:ndtv.com OR site:indianexpress.com OR site:livemint.com OR site:economictimes.indiatimes.com OR site:cnbctv18.com OR site:cnbc.com'
+
+function isAllowedSource(name: string, url = '') {
+  const t = `${name} ${url}`.toLowerCase()
+  return (
+    /times of india|timesofindia\.indiatimes|\btoi\b/.test(t) ||
+    /\bndtv\b/.test(t) ||
+    /\bcnbc/.test(t) ||
+    /indian express|indianexpress/.test(t) ||
+    /\bmint\b|livemint/.test(t) ||
+    /economic times|economictimes/.test(t)
+  )
+}
+
+const TOI_CITY: Record<string, string> = {
+  Pune: 'https://timesofindia.indiatimes.com/rssfeeds/-2128821991.cms',
+  Mumbai: 'https://timesofindia.indiatimes.com/rssfeeds/-2128838597.cms',
+  Delhi: 'https://timesofindia.indiatimes.com/rssfeeds/-2128839596.cms',
+  Bengaluru: 'https://timesofindia.indiatimes.com/rssfeeds/-2128833038.cms',
+  Chennai: 'https://timesofindia.indiatimes.com/rssfeeds/2950623.cms',
+  Hyderabad: 'https://timesofindia.indiatimes.com/rssfeeds/-2128816011.cms',
+  Kolkata: 'https://timesofindia.indiatimes.com/rssfeeds/-2128830821.cms',
+  Ahmedabad: 'https://timesofindia.indiatimes.com/rssfeeds/-2128821153.cms',
+}
+
+const IE_CITY: Record<string, string> = {
+  Pune: 'https://indianexpress.com/section/cities/pune/feed/',
+  Mumbai: 'https://indianexpress.com/section/cities/mumbai/feed/',
+  Delhi: 'https://indianexpress.com/section/cities/delhi/feed/',
+  Bengaluru: 'https://indianexpress.com/section/cities/bangalore/feed/',
+  Chennai: 'https://indianexpress.com/section/cities/chennai/feed/',
+  Hyderabad: 'https://indianexpress.com/section/cities/hyderabad/feed/',
+  Kolkata: 'https://indianexpress.com/section/cities/kolkata/feed/',
+  Ahmedabad: 'https://indianexpress.com/section/cities/ahmedabad/feed/',
+}
+
+const STATE_HUB: Record<string, string> = {
+  Maharashtra: 'Mumbai',
+  'Tamil Nadu': 'Chennai',
+  Karnataka: 'Bengaluru',
+  Telangana: 'Hyderabad',
+  Gujarat: 'Ahmedabad',
+}
+
+const TOPIC_PUBLISHER_FEEDS: Record<string, Feed[]> = {
+  Technology: [
+    { shelf: 'Technology', url: 'https://timesofindia.indiatimes.com/rssfeeds/66949542.cms', publisher: 'The Times of India' },
+    { shelf: 'Technology', url: 'https://feeds.feedburner.com/gadgets360-latest', publisher: 'NDTV' },
+    { shelf: 'Technology', url: 'https://indianexpress.com/section/technology/feed/', publisher: 'The Indian Express' },
+  ],
+  Business: [
+    { shelf: 'Business', url: 'https://timesofindia.indiatimes.com/rssfeeds/1898055.cms', publisher: 'The Times of India' },
+    { shelf: 'Business', url: 'https://feeds.feedburner.com/ndtvprofit-latest', publisher: 'NDTV' },
+    { shelf: 'Business', url: 'https://indianexpress.com/section/business/feed/', publisher: 'The Indian Express' },
+    { shelf: 'Business', url: 'https://www.livemint.com/rss/money', publisher: 'Mint' },
+    { shelf: 'Business', url: 'https://economictimes.indiatimes.com/rssfeedstopstories.cms', publisher: 'The Economic Times' },
+    { shelf: 'Business', url: 'https://www.cnbctv18.com/commonfeeds/v1/eng/rss/latest.xml', publisher: 'CNBC' },
+  ],
+  Sports: [
+    { shelf: 'Sports', url: 'https://timesofindia.indiatimes.com/rssfeeds/4719148.cms', publisher: 'The Times of India' },
+    { shelf: 'Sports', url: 'https://feeds.feedburner.com/ndtvsports-latest', publisher: 'NDTV' },
+    { shelf: 'Sports', url: 'https://indianexpress.com/section/sports/feed/', publisher: 'The Indian Express' },
+  ],
+}
+
+const EDITORIAL_FEEDS: Feed[] = [
+  { shelf: 'Editorials', url: 'https://indianexpress.com/section/opinion/editorials/feed/', publisher: 'The Indian Express' },
+  { shelf: 'Editorials', url: 'https://timesofindia.indiatimes.com/blogs/toi-editorials/feed/', publisher: 'The Times of India' },
+  { shelf: 'Editorials', url: 'https://www.livemint.com/rss/opinion', publisher: 'Mint' },
+  { shelf: 'Editorials', url: 'https://economictimes.indiatimes.com/opinion/et-editorial/rssfeeds/897228639.cms', publisher: 'The Economic Times' },
+]
+
+const INDIA_FEEDS: Feed[] = [
+  { shelf: 'India', url: 'https://timesofindia.indiatimes.com/rssfeeds/-2128936835.cms', publisher: 'The Times of India' },
+  { shelf: 'India', url: 'https://indianexpress.com/section/india/feed/', publisher: 'The Indian Express' },
+  { shelf: 'India', url: 'https://feeds.feedburner.com/ndtvnews-india-news', publisher: 'NDTV' },
+  { shelf: 'India', url: 'https://www.livemint.com/rss/news', publisher: 'Mint' },
+  { shelf: 'India', url: 'https://economictimes.indiatimes.com/rssfeedsdefault.cms', publisher: 'The Economic Times' },
+  { shelf: 'India', url: 'https://www.cnbctv18.com/commonfeeds/v1/eng/rss/india.xml', publisher: 'CNBC' },
+]
+
+const WORLD_FEEDS: Feed[] = [
+  { shelf: 'World', url: 'https://timesofindia.indiatimes.com/rssfeeds/296589292.cms', publisher: 'The Times of India' },
+  { shelf: 'World', url: 'https://feeds.feedburner.com/ndtvnews-world-news', publisher: 'NDTV' },
+  { shelf: 'World', url: 'https://indianexpress.com/section/world/feed/', publisher: 'The Indian Express' },
+  { shelf: 'World', url: 'https://www.livemint.com/rss/news', publisher: 'Mint' },
+  { shelf: 'World', url: 'https://www.cnbctv18.com/commonfeeds/v1/eng/rss/world.xml', publisher: 'CNBC' },
+]
+
+type RawItem = {
+  headline: string
+  url: string
+  publisher: string
+  publisherUrl: string
+  summary: string
+  image?: string
+  publishedAt: string
+  shelf: string
+  body: string[]
+}
+
+type Publisher = { name: string; url: string }
+
+export type Story = {
+  id: string
+  headline: string
+  summary: string
+  category: string
+  time: string
+  publishedAt: string
+  sources: number
+  image?: string
+  url: string
+  publishers: Publisher[]
+  whatHappened: string[]
+  whyItMatters: string
+  shelf: string
+  body: string[]
+}
+
+type BriefSection = {
+  id: string
+  label: string
+  sub: string
+  script: string
+  dur: string
+  storyIds: string[]
+}
+
+const cache = new Map<string, { at: number; body: string }>()
+const CACHE_MS = 8 * 60 * 1000
+
+function googleSearch(query: string) {
+  return `https://news.google.com/rss/search?q=${encodeURIComponent(`(${query}) (${GOOGLE_SITES}) when:1d`)}&hl=en-IN&gl=IN&ceid=IN:en`
+}
+
+function googleTopic(topic: string) {
+  return `https://news.google.com/rss/headlines/section/topic/${topic}?hl=en-IN&gl=IN&ceid=IN:en`
+}
+
+function decode(s: string) {
+  return s
+    .replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, '$1')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;|&apos;/g, "'")
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(Number(n)))
+    .trim()
+}
+
+function tag(block: string, name: string) {
+  const cdata = block.match(new RegExp(`<${name}[^>]*><!\\[CDATA\\[([\\s\\S]*?)\\]\\]></${name}>`, 'i'))
+  if (cdata) return cdata[1].trim()
+  const plain = block.match(new RegExp(`<${name}[^>]*>([\\s\\S]*?)</${name}>`, 'i'))
+  return plain?.[1]?.trim() ?? ''
+}
+
+function attrTag(block: string, name: string, attr: string) {
+  const m = block.match(new RegExp(`<${name}[^>]*\\s${attr}="([^"]+)"[^>]*>([\\s\\S]*?)</${name}>`, 'i'))
+  return m ? { attr: m[1], text: m[2].trim() } : { attr: '', text: '' }
+}
+
+function mediaUrl(block: string) {
+  const html = decode(block)
+  const patterns = [
+    /<media:content[^>]*url=["']([^"']+)["']/i,
+    /<media:thumbnail[^>]*url=["']([^"']+)["']/i,
+    /<enclosure[^>]*url=["']([^"']+)["'][^>]*type=["']image/i,
+    /<enclosure[^>]*type=["']image[^"']*["'][^>]*url=["']([^"']+)["']/i,
+    /<img[^>]+src=["']([^"']+)["']/i,
+  ]
+  for (const pattern of patterns) {
+    const match = html.match(pattern)
+    const src = match?.[1]
+    if (src && /^https?:/i.test(src) && !/1x1|pixel|spacer|blank\.(gif|png)/i.test(src)) {
+      return normalizeImage(src)
+    }
+  }
+}
+
+function normalizeImage(url: string) {
+  const id = url.match(/msid-(\d+)/i)?.[1] || url.match(/\/photo\/(\d+)\.cms/i)?.[1]
+  if (id && /toiimg|timesofindia/i.test(url)) {
+    return `https://static.toiimg.com/thumb/msid-${id},width-800,resizemode-4/${id}.jpg`
+  }
+  return url
+}
+
+function articleUrl(block: string, fallback: string) {
+  const hrefs = [...block.matchAll(/href=["']([^"']+)["']/gi)].map(m => decode(m[1]))
+  return hrefs.find(h => /^https?:/i.test(h) && !/news\.google\.com/i.test(h)) || fallback
+}
+
+function htmlParagraphs(html: string): string[] {
+  const blobs = [
+    ...html.matchAll(/<p\b[^>]*>([\s\S]*?)<\/p>/gi),
+    ...html.matchAll(/<(?:div|span)[^>]*(?:article|story|content|Normal|artText|_s30J|sp-cn)[^>]*>([\s\S]*?)<\/(?:div|span)>/gi),
+  ]
+    .map(m => stripHtml(m[1]))
+    .flatMap(p => p.split(/\n{2,}/))
+    .map(p => p.replace(/\s+/g, ' ').trim())
+    .map(p => p.split(/you can also check\s*:?/i)[0].replace(/[|\s]+$/g, '').trim())
+    .filter(p => p.length > 55 && !isJunkParagraph(p) && !/cookie|subscribe|newsletter|advertisement|read more|sign in|download the app|click here|follow us|whatsapp|telegram/i.test(p))
+  const uniq: string[] = []
+  for (const p of blobs) {
+    if (!uniq.some(u => u.slice(0, 80) === p.slice(0, 80))) uniq.push(p)
+  }
+  return uniq.slice(0, 80)
+}
+
+function stripHtml(s: string) {
+  return decode(s)
+    .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+    .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+function splitHeadline(title: string, sourceName: string) {
+  const decoded = decode(title)
+  if (sourceName) {
+    for (const sep of [` - ${sourceName}`, ` | ${sourceName}`]) {
+      if (decoded.endsWith(sep)) return decoded.slice(0, -sep.length).trim()
+    }
+  }
+  for (const sep of [' - ', ' | ']) {
+    const idx = decoded.lastIndexOf(sep)
+    if (idx > 24) return decoded.slice(0, idx).trim()
+  }
+  return decoded
+}
+
+function tokens(text: string) {
+  return text
+    .toLowerCase()
+    .replace(/[^a-z0-9\u00C0-\u024F]+/g, ' ')
+    .split(/\s+/)
+    .filter(w => w.length > 2 && !STOP.has(w))
+}
+
+function jaccard(a: string[], b: string[]) {
+  if (!a.length || !b.length) return 0
+  const sa = new Set(a)
+  const sb = new Set(b)
+  let inter = 0
+  for (const x of sa) if (sb.has(x)) inter++
+  return inter / (sa.size + sb.size - inter)
+}
+
+function relativeTime(iso: string) {
+  const then = Date.parse(iso)
+  if (!Number.isFinite(then)) return 'Today'
+  const mins = Math.max(0, Math.round((Date.now() - then) / 60000))
+  if (mins < 1) return 'Just now'
+  if (mins < 60) return `${mins}m ago`
+  const hours = Math.round(mins / 60)
+  if (hours < 24) return `${hours}h ago`
+  const days = Math.round(hours / 24)
+  return days === 1 ? 'Yesterday' : `${days}d ago`
+}
+
+function inferCategory(headline: string, shelf: string) {
+  const h = headline.toLowerCase()
+  if (/\b(cricket|t20|ipl|football|fifa|hockey|olympics|match|wicket)\b/.test(h)) return 'Sports'
+  if (/\b(ai|chatgpt|openai|google|apple|microsoft|tech|app|chip)\b/.test(h)) return 'Technology'
+  if (/\b(ipo|sensex|nifty|rbi|rupee|bank|gdp|market|stock)\b/.test(h)) return 'Finance'
+  if (/\b(election|parliament|minister|bjp|congress|policy|bill)\b/.test(h)) return 'Politics'
+  if (/\b(climate|flood|rain|cyclone|heat)\b/.test(h)) return 'Weather'
+  if (/\b(startup|funding|series [abc]|unicorn)\b/.test(h)) return 'Business'
+  if (shelf.includes('·')) return 'City'
+  return shelf
+}
+
+function sentences(text: string) {
+  return text
+    .split(/(?<=[.!?])\s+/)
+    .map(s => s.trim())
+    .filter(s => s.length > 28 && !/^https?:/i.test(s))
+}
+
+function isUsefulSummary(text: string, headline: string) {
+  const clean = text.trim()
+  if (clean.length < 80) return false
+  if (/<[^>]+>/.test(clean)) return false
+  const h = headline.toLowerCase()
+  const c = clean.toLowerCase()
+  if (c === h) return false
+  if (c.startsWith(h) && clean.length < headline.length + 48) return false
+  if (c.includes(h) && clean.length < headline.length + 60) return false
+  return true
+}
+
+function condense(texts: string[], max = 3) {
+  const out: string[] = []
+  const seen: string[][] = []
+  for (const text of texts) {
+    for (const s of sentences(text)) {
+      const t = tokens(s)
+      if (t.length < 5) continue
+      if (seen.some(prev => jaccard(prev, t) > 0.62)) continue
+      seen.push(t)
+      out.push(s.replace(/\s+/g, ' '))
+      if (out.length >= max) return out
+    }
+  }
+  return out
+}
+
+function whyItMatters(story: { sources: number; shelf: string; publishers: Publisher[] }) {
+  const names = story.publishers.slice(0, 3).map(p => p.name).join(', ')
+  if (story.sources >= 8) {
+    return `This is one of today's most widely covered stories, with ${story.sources} outlets including ${names} running it. Pulse clustered them so you get the core facts once.`
+  }
+  if (story.shelf.startsWith('My City') || ['Pune', 'Mumbai', 'Bengaluru', 'Chennai', 'Hyderabad', 'Delhi', 'Kolkata', 'Ahmedabad'].some(c => story.shelf.includes(c))) {
+    return `Local newsrooms are moving this today. ${story.sources} ${story.sources === 1 ? 'source is' : 'sources are'} on it — useful if you live in or follow ${story.shelf.replace('My City · ', '')}.`
+  }
+  return `Pulse grouped ${story.sources} ${story.sources === 1 ? 'report' : 'reports'} from ${names || 'today\'s news apps'} into one short brief so you do not have to open every publisher.`
+}
+
+function parseRss(xml: string, shelf: string, publisherHint?: string): RawItem[] {
+  const blocks = xml.match(/<item[\s\S]*?<\/item>/gi) ?? []
+  const items: RawItem[] = []
+  for (const block of blocks) {
+    const source = attrTag(block, 'source', 'url')
+    const rawTitle = tag(block, 'title')
+    const publisher = publisherHint || decode(source.text) || 'Unknown'
+    const headline = splitHeadline(rawTitle, publisher)
+    const googleLink = decode(tag(block, 'link') || tag(block, 'guid'))
+    const url = articleUrl(block, googleLink)
+    if (!headline || !url) continue
+    if (!isAllowedSource(publisher, url)) continue
+    const rawHtml = tag(block, 'content:encoded') || tag(block, 'description')
+    const desc = stripHtml(rawHtml)
+    const pubDate = tag(block, 'pubDate') || tag(block, 'dc:date') || tag(block, 'updated')
+    const publishedAt = pubDate ? new Date(pubDate).toISOString() : new Date().toISOString()
+    if (Number.isNaN(Date.parse(publishedAt))) continue
+    items.push({
+      headline,
+      url,
+      publisher,
+      publisherUrl: url,
+      summary: isUsefulSummary(desc, headline) ? desc : '',
+      image: mediaUrl(block),
+      publishedAt,
+      shelf,
+      body: htmlParagraphs(rawHtml),
+    })
+  }
+  return items
+}
+
+async function fetchText(url: string, timeoutMs = 9000, accept = 'application/rss+xml, application/xml, text/xml, text/html, */*') {
+  const page = await fetchPage(url, timeoutMs, accept)
+  return page?.html ?? null
+}
+
+async function fetchPage(url: string, timeoutMs = 9000, accept = 'text/html, */*') {
+  const ctrl = new AbortController()
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs)
+  try {
+    const res = await fetch(url, {
+      signal: ctrl.signal,
+      headers: { ...FETCH_HEADERS, Accept: accept },
+      redirect: 'follow',
+    })
+    const html = await res.text()
+    if (!res.ok && html.length < 12000) return null
+    return { html, url: res.url || url }
+  } catch {
+    return null
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+function decodeGoogleNewsUrl(url: string) {
+  try {
+    const encoded = url.match(/\/(?:rss\/)?articles\/([A-Za-z0-9_-]+)/)?.[1]
+    if (!encoded) return ''
+    const buf = Buffer.from(encoded.replace(/-/g, '+').replace(/_/g, '/'), 'base64')
+    const text = buf.toString('utf8')
+    const found = [...text.matchAll(/https?:\/\/[^\s\x00-\x1f"'<>]+/g)].map(m => m[0].replace(/[),.;]+$/, ''))
+    return found.find(h => allowedHost(h) && !/news\.google\.com/i.test(h)) || ''
+  } catch {
+    return ''
+  }
+}
+
+function publisherFallbacks(url: string) {
+  try {
+    const u = new URL(url)
+    const host = u.hostname.replace(/^www\./, '')
+    if (host === 'ndtv.com' || host.endsWith('.ndtv.com')) {
+      if (u.pathname.startsWith('/amp/')) return []
+      return [`${u.origin}/amp${u.pathname}${u.search}`]
+    }
+  } catch {
+    /* ignore */
+  }
+  return []
+}
+
+async function resolveArticleUrl(url: string) {
+  if (!url) return url
+  if (!/news\.google\.com/i.test(url)) return url
+  const decoded = decodeGoogleNewsUrl(url)
+  if (decoded) return decoded
+  const page = await fetchPage(url, 8000)
+  if (!page) return url
+  if (page.url && !/news\.google\.com/i.test(page.url) && allowedHost(page.url)) return page.url
+  const canonical =
+    page.html.match(/<link[^>]+rel=["']canonical["'][^>]+href=["']([^"']+)/i)?.[1] ||
+    metaContent(page.html, 'og:url')
+  if (canonical && !/news\.google\.com/i.test(canonical) && allowedHost(canonical)) return decode(canonical)
+  const hrefs = [...page.html.matchAll(/href=["'](https?:\/\/[^"']+)["']/gi)].map(m => decode(m[1]))
+  return hrefs.find(h => allowedHost(h) && !/news\.google\.com|accounts\.google|google\.com\/url/i.test(h)) || url
+}
+
+async function ogImage(url: string) {
+  if (!url) return
+  const html = await fetchText(url, 4500, 'text/html')
+  if (!html) return
+  const match =
+    html.match(/<meta[^>]+property=["']og:image(?::secure_url)?["'][^>]*content=["']([^"']+)/i) ||
+    html.match(/<meta[^>]+content=["']([^"']+)["'][^>]*property=["']og:image(?::secure_url)?["']/i)
+  const src = match?.[1]?.replace(/&amp;/g, '&')
+  if (src && /^https?:/i.test(src)) return normalizeImage(src)
+}
+
+async function fillImages(stories: Story[]) {
+  const missing = stories.filter(story => !story.image).slice(0, 28)
+  let index = 0
+  const workers = Array.from({ length: Math.min(5, missing.length) }, async () => {
+    while (index < missing.length) {
+      const story = missing[index++]
+      const image = await ogImage(story.url)
+      if (image) story.image = image
+    }
+  })
+  await Promise.all(workers)
+}
+
+function allowedHost(url: string) {
+  try {
+    const host = new URL(url).hostname.replace(/^www\./, '')
+    return ALLOWED_HOSTS.some(h => host === h || host.endsWith(`.${h}`))
+  } catch {
+    return false
+  }
+}
+
+function metaContent(html: string, prop: string) {
+  const a = html.match(new RegExp(`<meta[^>]+property=["']${prop}["'][^>]*content=["']([^"']+)["']`, 'i'))
+  const b = html.match(new RegExp(`<meta[^>]+content=["']([^"']+)["'][^>]*property=["']${prop}["']`, 'i'))
+  return (a?.[1] || b?.[1] || '').replace(/&amp;/g, '&')
+}
+
+function bodyToParagraphs(body: string): string[] {
+  const paras = body
+    .split(/\n+/)
+    .map(p => p.replace(/\s+/g, ' ').trim())
+    .filter(p => p.length > 70)
+  if (paras.length) return paras.slice(0, 40)
+  return htmlParagraphs(`<p>${body}</p>`)
+}
+
+function findJsonLdBody(html: string): string[] {
+  const blocks = [...html.matchAll(/<script[^>]*type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi)]
+  const visit = (node: unknown): string[] => {
+    if (!node || typeof node !== 'object') return []
+    if (Array.isArray(node)) {
+      for (const item of node) {
+        const found = visit(item)
+        if (found.length) return found
+      }
+      return []
+    }
+    const rec = node as Record<string, unknown>
+    if (typeof rec.articleBody === 'string' && rec.articleBody.length > 120) {
+      return bodyToParagraphs(decode(rec.articleBody))
+    }
+    const kind = String(Array.isArray(rec['@type']) ? rec['@type'].join(' ') : rec['@type'] || '')
+    if (/NewsArticle|Article|ReportageNewsArticle/i.test(kind) && typeof rec.text === 'string' && rec.text.length > 120) {
+      return bodyToParagraphs(decode(rec.text))
+    }
+    if (rec['@graph']) return visit(rec['@graph'])
+    return []
+  }
+  for (const block of blocks) {
+    const raw = decode(block[1]).replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g, '')
+    try {
+      const found = visit(JSON.parse(raw))
+      if (found.length) return found
+    } catch {
+      try {
+        const found = visit(JSON.parse(raw.replace(/,\s*([}\]])/g, '$1')))
+        if (found.length) return found
+      } catch {
+        /* ignore bad json-ld */
+      }
+    }
+  }
+  const quoted = html.match(/"articleBody"\s*:\s*"((?:\\.|[^"\\])*)"/)
+  if (quoted?.[1]) {
+    const body = decode(quoted[1].replace(/\\n/g, '\n').replace(/\\"/g, '"'))
+    if (body.length > 120) return bodyToParagraphs(body)
+  }
+  return []
+}
+
+function extractParagraphs(html: string): string[] {
+  const fromLd = findJsonLdBody(html)
+  if (fromLd.length >= 2) return cleanArticleParagraphs(fromLd)
+  const cleaned = html
+    .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+    .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+    .replace(/<noscript[\s\S]*?<\/noscript>/gi, ' ')
+  const articleChunk =
+    (cleaned.match(/<article\b[\s\S]*?<\/article>/i) || [])[0] ||
+    (cleaned.match(/<(?:div|section)[^>]*(?:story|article|editorial|content|artText|Normal|full-details|sp-cn|ins_storybody)[^>]*>[\s\S]*$/i) || [])[0] ||
+    cleaned
+  const paras = htmlParagraphs(articleChunk)
+  const picked = paras.length >= 2 ? paras : fromLd.length ? fromLd : paras
+  return cleanArticleParagraphs(picked)
+}
+
+function pageToArticle(html: string) {
+  return {
+    title: decode(metaContent(html, 'og:title') || (html.match(/<title[^>]*>([\s\S]*?)<\/title>/i) || [])[1] || ''),
+    image: normalizeImage(metaContent(html, 'og:image') || ''),
+    paragraphs: extractParagraphs(html),
+  }
+}
+
+async function extractArticle(url: string) {
+  const empty = { title: '', image: '', paragraphs: [] as string[] }
+  const candidates = [...new Set([url, ...publisherFallbacks(url)])]
+  const pages = await Promise.all(candidates.map(candidate => fetchPage(candidate, 14000)))
+  let best = empty
+  for (const page of pages) {
+    if (!page) continue
+    const article = pageToArticle(page.html)
+    if (article.paragraphs.length >= 2) return article
+    if (article.paragraphs.length > best.paragraphs.length) best = article
+  }
+  return best
+}
+
+const articleCache = new Map<string, { at: number; body: string }>()
+const articleInflight = new Map<string, Promise<string>>()
+
+function cachedArticle(url: string) {
+  const hit = articleCache.get(url)
+  if (hit && Date.now() - hit.at < CACHE_MS) return hit.body
+}
+
+async function loadArticleBody(raw: string) {
+  const cached = cachedArticle(raw)
+  if (cached) return cached
+  const pending = articleInflight.get(raw)
+  if (pending) return pending
+  const work = (async () => {
+    const target = /news\.google\.com/i.test(raw) ? await resolveArticleUrl(raw) : raw
+    if (!target || !allowedHost(target)) {
+      return JSON.stringify({ error: 'That publisher is not available for in-app reading.', paragraphs: [] })
+    }
+    const ready = cachedArticle(target)
+    if (ready) {
+      articleCache.set(raw, { at: Date.now(), body: ready })
+      return ready
+    }
+    const article = await extractArticle(target)
+    const body = JSON.stringify(article)
+    if (article.paragraphs.length) {
+      const row = { at: Date.now(), body }
+      articleCache.set(raw, row)
+      articleCache.set(target, row)
+    }
+    return body
+  })().finally(() => articleInflight.delete(raw))
+  articleInflight.set(raw, work)
+  return work
+}
+
+export async function handleArticle(req: IncomingMessage, res: ServerResponse) {
+  try {
+    const raw = new URL(req.url || '/', 'http://localhost').searchParams.get('url') || ''
+    const body = await loadArticleBody(raw)
+    let failed = false
+    try {
+      const parsed = JSON.parse(body) as { error?: string; paragraphs?: string[] }
+      failed = Boolean(parsed.error) && !(parsed.paragraphs?.length)
+    } catch {
+      failed = true
+    }
+    res.statusCode = failed ? 400 : 200
+    res.setHeader('Content-Type', 'application/json; charset=utf-8')
+    res.setHeader('Cache-Control', 'private, max-age=120')
+    res.end(body)
+  } catch (err) {
+    res.statusCode = 500
+    res.setHeader('Content-Type', 'application/json; charset=utf-8')
+    res.end(JSON.stringify({ error: err instanceof Error ? err.message : 'Could not load article' }))
+  }
+}
+
+function cluster(items: RawItem[]): Story[] {
+  type Bucket = { items: RawItem[]; tokens: string[] }
+  const buckets: Bucket[] = []
+
+  const sorted = [...items].sort((a, b) => {
+    const img = Number(Boolean(b.image)) - Number(Boolean(a.image))
+    if (img) return img
+    return Date.parse(b.publishedAt) - Date.parse(a.publishedAt)
+  })
+  for (const item of sorted) {
+    const t = tokens(item.headline)
+    if (t.length < 2) continue
+    let matched: Bucket | undefined
+    for (const bucket of buckets) {
+      if (jaccard(bucket.tokens, t) >= 0.42) {
+        matched = bucket
+        break
+      }
+    }
+    if (matched) {
+      matched.items.push(item)
+      if (t.length > matched.tokens.length) matched.tokens = t
+    } else {
+      buckets.push({ items: [item], tokens: t })
+    }
+  }
+
+  return buckets.map(bucket => {
+    const primary =
+      bucket.items.find(i => i.summary) ||
+      bucket.items[0]
+    const publishers = new Map<string, Publisher>()
+    for (const item of bucket.items) {
+      const key = item.publisher.toLowerCase()
+      if (!publishers.has(key)) {
+        publishers.set(key, { name: item.publisher, url: item.url || item.publisherUrl })
+      }
+    }
+    const pubList = [...publishers.values()]
+    const summaries = bucket.items.map(i => i.summary).filter(Boolean)
+    const fromHeadlines = bucket.items
+      .slice(0, 4)
+      .map(i => i.headline)
+      .filter((h, i, arr) => arr.findIndex(x => x === h) === i)
+    const what = condense(summaries, 3)
+    const whatHappened =
+      what.length > 0
+        ? what
+        : fromHeadlines.length > 1
+          ? [
+              `${pubList[0]?.name || 'Newsrooms'} report: ${primary.headline}.`,
+              `Other desks are framing it as ${fromHeadlines[1]}.`,
+            ]
+          : [`${pubList.map(p => p.name).slice(0, 3).join(', ') || 'Live coverage'} : ${primary.headline}.`]
+
+    const summary =
+      what[0] ||
+      (fromHeadlines[1] ? `${primary.headline}. Also reported as: ${fromHeadlines[1]}.` : primary.headline)
+
+    const id = Buffer.from(`${primary.headline}|${primary.shelf}`)
+      .toString('base64url')
+      .slice(0, 18)
+
+    const story: Story = {
+      id,
+      headline: primary.headline,
+      summary: summary.length > 220 ? `${summary.slice(0, 217).trim()}…` : summary,
+      category: inferCategory(primary.headline, primary.shelf),
+      time: relativeTime(primary.publishedAt),
+      publishedAt: primary.publishedAt,
+      sources: pubList.length,
+      image: bucket.items.find(i => i.image)?.image,
+      url: bucket.items.find(i => i.image)?.url || primary.url,
+      publishers: pubList,
+      whatHappened,
+      whyItMatters: '',
+      shelf: primary.shelf,
+      body: [...bucket.items].sort((a, b) => b.body.length - a.body.length)[0]?.body || [],
+    }
+    story.whyItMatters = whyItMatters(story)
+    return story
+  })
+}
+
+function oneLine(story: Story) {
+  const strip = (text: string) =>
+    text
+      .replace(/<[^>]+>/g, ' ')
+      .replace(/\b(the )?(times of india|indian express|ndtv|cnbc( tv18)?|livemint|mint|economic times|toi)\b/gi, '')
+      .replace(/^\s*reports?\s*[:\-–]?\s*/i, '')
+      .replace(/\s+/g, ' ')
+      .trim()
+  const fact = strip(story.summary || story.whatHappened[0] || '')
+    .split(/(?<=[.!?])\s+/)[0]
+  const headline = story.headline.replace(/\s+/g, ' ').trim().replace(/[.!?]?$/, '.')
+  if (fact && fact.length > 48 && !fact.toLowerCase().includes(headline.slice(0, 24).toLowerCase())) {
+    let line = fact.length > 170 ? fact.slice(0, 167).trim() : fact
+    if (!/[.!?]$/.test(line)) line += '.'
+    return line
+  }
+  return headline
+}
+
+function spokenCount(n: number) {
+  if (n === 1) return 'one'
+  if (n === 2) return 'two'
+  return 'three'
+}
+
+function shelfBriefName(label: string) {
+  return label.replace(/^My City · /, '').trim()
+}
+
+function topicIntro(name: string, count: number) {
+  const n = spokenCount(Math.min(3, count))
+  if (name.toLowerCase() === 'editorials') {
+    return count === 1 ? 'The top editorial is.' : `The top ${n} editorials are.`
+  }
+  return count === 1 ? `The top story from ${name} is.` : `The top ${n} stories from ${name} are.`
+}
+
+function buildBrief(shelves: Array<{ label: string; stories: Story[] }>) {
+  const used = new Set<string>()
+  const hour = new Date().getHours()
+  const hello = hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening'
+  const sections: BriefSection[] = [
+    {
+      id: 'open',
+      label: `${hello}.`,
+      sub: 'Today’s Pulse',
+      script: `${hello}. Here is today's Pulse.`,
+      dur: '0:06',
+      storyIds: [],
+    },
+  ]
+
+  let storyCount = 0
+  for (const shelf of shelves) {
+    const stories: Story[] = []
+    for (const story of shelf.stories) {
+      if (used.has(story.id)) continue
+      used.add(story.id)
+      stories.push(story)
+      if (stories.length >= 3) break
+    }
+    if (!stories.length) continue
+    storyCount += stories.length
+    const name = shelfBriefName(shelf.label)
+    const intro = topicIntro(name, stories.length)
+    const lines = stories.map(story => oneLine(story))
+    const script = `${intro} ${lines.join(' ')}`
+    const secs = Math.max(8, Math.round((script.split(/\s+/).length / 115) * 60))
+    sections.push({
+      id: `shelf-${shelf.label}`,
+      label: name,
+      sub: intro,
+      script,
+      dur: `0:${String(Math.min(59, secs)).padStart(2, '0')}`,
+      storyIds: stories.map(s => s.id),
+    })
+  }
+
+  const allWords = sections.reduce((sum, s) => sum + s.script.split(/\s+/).length, 0)
+  return {
+    sections,
+    storyCount,
+    minutes: Math.max(1, Math.round(allWords / 115)),
+    script: sections.map(s => s.script).join(' '),
+  }
+}
+
+function feedsFor(locations: string[], topics: string[]) {
+  const feeds: Feed[] = []
+  const locSet = new Set(locations)
+  const cityLike = locations.filter(l => !['India', 'World', ...Object.keys(TOPIC_FEEDS), ...['Maharashtra', 'Tamil Nadu', 'Karnataka', 'Telangana', 'Gujarat', 'Rajasthan']].includes(l))
+  const states = locations.filter(l =>
+    ['Maharashtra', 'Tamil Nadu', 'Karnataka', 'Telangana', 'Gujarat', 'Rajasthan'].includes(l),
+  )
+
+  for (const city of cityLike) {
+    const toi = TOI_CITY[city]
+    const ie = IE_CITY[city]
+    if (toi) feeds.push({ shelf: `My City · ${city}`, url: toi, publisher: 'The Times of India' })
+    if (ie) feeds.push({ shelf: `My City · ${city}`, url: ie, publisher: 'The Indian Express' })
+    feeds.push({ shelf: `My City · ${city}`, url: googleSearch(`${city} when:1d`) })
+  }
+  for (const state of states) {
+    const hub = STATE_HUB[state]
+    if (hub && TOI_CITY[hub]) feeds.push({ shelf: state, url: TOI_CITY[hub], publisher: 'The Times of India' })
+    if (hub && IE_CITY[hub]) feeds.push({ shelf: state, url: IE_CITY[hub], publisher: 'The Indian Express' })
+    if (state === 'Maharashtra') {
+      feeds.push({ shelf: state, url: 'https://feeds.feedburner.com/ndtvnews-cities-news', publisher: 'NDTV' })
+    }
+    feeds.push({ shelf: state, url: googleSearch(`${state} when:1d`) })
+  }
+  if (locSet.has('India')) {
+    feeds.push(...INDIA_FEEDS)
+    feeds.push({ shelf: 'India', url: googleTopic('NATION') })
+  }
+  if (locSet.has('World')) {
+    feeds.push(...WORLD_FEEDS)
+    feeds.push({ shelf: 'World', url: googleTopic('WORLD') })
+  }
+  for (const topic of topics) {
+    const pubs = TOPIC_PUBLISHER_FEEDS[topic]
+    if (pubs) feeds.push(...pubs)
+    const spec = TOPIC_FEEDS[topic]
+    if (!spec) continue
+    const url = spec.kind === 'topic' ? googleTopic(spec.value) : googleSearch(spec.value)
+    feeds.push({ shelf: topic, url })
+  }
+  feeds.push(...EDITORIAL_FEEDS)
+  return feeds
+}
+
+async function buildEdition(locations: string[], topics: string[]) {
+  const locs = locations.length ? locations : ['India', 'World']
+  const feeds = feedsFor(locs, topics)
+  const unique = new Map(feeds.map(f => [`${f.shelf}|${f.url}`, f]))
+  const results = await Promise.allSettled(
+    [...unique.values()].map(async feed => {
+      const xml = await fetchText(feed.url)
+      if (!xml) return [] as RawItem[]
+      const parsed = parseRss(xml, feed.shelf, feed.publisher)
+      if (feed.shelf === 'Maharashtra' && feed.publisher === 'NDTV') {
+        return parsed.filter(item =>
+          /\b(mumbai|pune|thane|nagpur|nashik|maharashtra|amravati|kolhapur|aurangabad|navi mumbai|chakan|wagholi)\b/i.test(
+            `${item.headline} ${item.url}`,
+          ),
+        )
+      }
+      return parsed
+    }),
+  )
+
+  const byShelf = new Map<string, RawItem[]>()
+  for (const result of results) {
+    if (result.status !== 'fulfilled') continue
+    for (const item of result.value) {
+      const list = byShelf.get(item.shelf) ?? []
+      list.push(item)
+      byShelf.set(item.shelf, list)
+    }
+  }
+
+  const seen = new Set<string>()
+  const shelves: Array<{ label: string; stories: Story[] }> = []
+  const order = [
+    ...locs.filter(l => cityLikeLabel(l)).map(c => `My City · ${c}`),
+    ...locs.filter(l => ['Maharashtra', 'Tamil Nadu', 'Karnataka', 'Telangana', 'Gujarat', 'Rajasthan'].includes(l)),
+    ...['India', 'World'].filter(l => locs.includes(l)),
+    'Editorials',
+    ...topics,
+  ]
+
+  for (const label of order) {
+    const raw = byShelf.get(label)
+    if (!raw?.length) continue
+    const clustered = cluster(raw)
+      .filter(story => {
+        const key = tokens(story.headline).slice(0, 6).join(' ')
+        if (seen.has(key)) return false
+        seen.add(key)
+        return true
+      })
+    const allowed = clustered.filter(story =>
+      story.publishers.some(p => isAllowedSource(p.name, p.url || story.url)) || isAllowedSource('', story.url),
+    )
+    const stories = pickStories(allowed, 12)
+    if (stories.length) shelves.push({ label, stories })
+  }
+
+  const highlights = [...shelves.flatMap(s => s.stories)]
+    .sort((a, b) => b.sources - a.sources || Date.parse(b.publishedAt) - Date.parse(a.publishedAt))
+    .slice(0, 6)
+
+  await fillImages(shelves.flatMap(s => s.stories))
+
+  const brief = buildBrief(shelves)
+  return {
+    fetchedAt: new Date().toISOString(),
+    shelves,
+    highlights,
+    brief,
+  }
+}
+
+function cityLikeLabel(l: string) {
+  return ['Pune', 'Mumbai', 'Bengaluru', 'Chennai', 'Hyderabad', 'Delhi', 'Kolkata', 'Ahmedabad'].includes(l)
+}
+
+function pickStories(stories: Story[], limit = 16) {
+  const pictured = stories.filter(s => s.image)
+  const rest = stories.filter(s => !s.image)
+  const roundRobin = (list: Story[], into: Story[]) => {
+    const groups = new Map<string, Story[]>()
+    for (const story of list) {
+      const key = story.publishers[0]?.name || story.id
+      const arr = groups.get(key) ?? []
+      arr.push(story)
+      groups.set(key, arr)
+    }
+    let added = true
+    while (into.length < limit && added) {
+      added = false
+      for (const arr of groups.values()) {
+        const next = arr.shift()
+        if (!next) continue
+        into.push(next)
+        added = true
+        if (into.length >= limit) break
+      }
+    }
+  }
+  const picked: Story[] = []
+  roundRobin(pictured, picked)
+  if (picked.length < limit) roundRobin(rest, picked)
+  return picked
+}
+
+export async function handleNews(req: IncomingMessage, res: ServerResponse) {
+  try {
+    const url = new URL(req.url || '/', 'http://localhost')
+    const locations = (url.searchParams.get('locations') || '')
+      .split(',')
+      .map(s => s.trim())
+      .filter(Boolean)
+    const topics = (url.searchParams.get('topics') || '')
+      .split(',')
+      .map(s => s.trim())
+      .filter(Boolean)
+    const fresh = url.searchParams.get('fresh') === '1'
+    const key = `${locations.join('|')}::${topics.join('|')}::${new Date().toISOString().slice(0, 10)}`
+    const hit = cache.get(key)
+    if (!fresh && hit && Date.now() - hit.at < CACHE_MS) {
+      res.setHeader('Content-Type', 'application/json; charset=utf-8')
+      res.setHeader('Cache-Control', 'no-store')
+      res.end(hit.body)
+      return
+    }
+    const payload = await buildEdition(locations, topics)
+    const body = JSON.stringify(payload)
+    cache.set(key, { at: Date.now(), body })
+    res.setHeader('Content-Type', 'application/json; charset=utf-8')
+    res.setHeader('Cache-Control', 'no-store')
+    res.end(body)
+  } catch (err) {
+    res.statusCode = 500
+    res.setHeader('Content-Type', 'application/json; charset=utf-8')
+    res.end(JSON.stringify({ error: err instanceof Error ? err.message : 'Failed to load news' }))
+  }
+}
+
+function attach(server: ViteDevServer | PreviewServer, tts?: TtsOptions) {
+  server.middlewares.use((req, res, next) => {
+    if (req.url?.startsWith('/api/tts')) {
+      void handleTts(req, res, tts)
+      return
+    }
+    if (req.url?.startsWith('/api/article')) {
+      void handleArticle(req, res)
+      return
+    }
+    if (!req.url?.startsWith('/api/news')) return next()
+    void handleNews(req, res)
+  })
+}
+
+export function newsPlugin(tts?: TtsOptions): Plugin {
+  return {
+    name: 'pulse-news',
+    configureServer: server => attach(server, tts),
+    configurePreviewServer: server => attach(server, tts),
+  }
+}

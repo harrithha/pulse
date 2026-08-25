@@ -1,0 +1,95 @@
+@import url('https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=Outfit:wght@300;400;500;600&display=swap');
+@import 'tailwindcss';
+
+@theme {
+  --font-serif: 'DM Serif Display', Georgia, serif;
+  --font-sans: 'Outfit', system-ui, sans-serif;
+
+  --color-ink: #EEE8E0;
+  --color-surface: #141424;
+  --color-elevated: #1A1A28;
+  --color-amber: #F5A623;
+  --color-paper: #07070C;
+  --color-muted: #9B968F;
+  --color-dim: #8A8AA0;
+}
+
+*, *::before, *::after {
+  box-sizing: border-box;
+}
+
+html {
+  scroll-behavior: smooth;
+  overflow-x: hidden;
+  color-scheme: dark;
+}
+
+body {
+  background-color: #07070C;
+  color: #EEE8E0;
+  font-family: 'Outfit', system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  overflow-x: hidden;
+  min-height: 100dvh;
+  -webkit-tap-highlight-color: transparent;
+}
+
+img {
+  max-width: 100%;
+}
+
+button, a, input {
+  touch-action: manipulation;
+}
+
+.scrollbar-none::-webkit-scrollbar {
+  display: none;
+}
+.scrollbar-none {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-thumb {
+  background: #2A2A40;
+  border-radius: 999px;
+}
+
+.row-scroll {
+  display: flex;
+  gap: 12px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scroll-snap-type: x mandatory;
+  scroll-padding-inline: 20px;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+  padding: 4px 4px 16px;
+}
+.row-scroll::-webkit-scrollbar {
+  display: none;
+}
+
+.nav-btn {
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  line-height: 0;
+  border-radius: 999px;
+  flex-shrink: 0;
+}
+.nav-btn svg {
+  display: block;
+}
+
+@media (max-width: 767px) {
+  .row-scroll {
+    gap: 10px;
+    scroll-padding-inline: 16px;
+  }
+}

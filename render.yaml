@@ -1,0 +1,13 @@
+services:
+  - type: web
+    name: pulse
+    runtime: node
+    buildCommand: npm ci && npm run build
+    startCommand: npm start
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+      - key: SPEECHIFY_API_KEY
+        sync: false
+      - key: SPEECHIFY_VOICE_ID
+        value: geffen_32

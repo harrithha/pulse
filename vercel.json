@@ -1,0 +1,13 @@
+{
+  "framework": "vite",
+  "buildCommand": "npm run build",
+  "outputDirectory": "dist",
+  "rewrites": [
+    { "source": "/((?!api/).*)", "destination": "/index.html" }
+  ],
+  "functions": {
+    "api/news.ts": { "maxDuration": 60 },
+    "api/article.ts": { "maxDuration": 30 },
+    "api/tts.ts": { "maxDuration": 60 }
+  }
+}
