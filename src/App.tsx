@@ -171,7 +171,7 @@ function Tag({ label, active, onClick }: { label: string; active: boolean; onCli
       className="px-3 sm:px-4 py-2 rounded-full text-sm transition-all duration-150 min-h-10"
       style={
         active
-          ? { background: '#EA580C', color: '#111111', fontWeight: 600 }
+          ? { background: '#EA580C', color: '#FFFFFF', fontWeight: 600 }
           : { background: '#17172A', color: '#B8B4AC', border: '1px solid rgba(255,255,255,0.08)' }
       }
     >
@@ -299,7 +299,7 @@ function OnboardingLocation({
           onClick={onNext}
           disabled={selected.size === 0}
           className="w-full sm:w-auto px-8 py-4 rounded-xl text-base font-semibold min-h-12"
-          style={{ background: '#EA580C', color: '#111111', opacity: selected.size === 0 ? 0.35 : 1 }}
+          style={{ background: '#EA580C', color: '#FFFFFF', opacity: selected.size === 0 ? 0.35 : 1 }}
         >
           Continue →
         </button>
@@ -328,7 +328,7 @@ function OnboardingTopics({
         <div className="flex flex-wrap gap-2 mb-6">
           {TOPICS.map(t => <Tag key={t} label={t} active={selected.has(t)} onClick={() => onToggle(t)} />)}
         </div>
-        <button onClick={onDone} className="w-full sm:w-auto px-8 py-4 rounded-xl text-base font-semibold min-h-12" style={{ background: '#EA580C', color: '#111111' }}>
+        <button onClick={onDone} className="w-full sm:w-auto px-8 py-4 rounded-xl text-base font-semibold min-h-12" style={{ background: '#EA580C', color: '#FFFFFF' }}>
           Load today’s edition →
         </button>
       </div>
@@ -528,9 +528,9 @@ function HomePage({
                   onClick={toggleAudio}
                   disabled={!edition.brief.sections.length}
                   className="inline-flex items-center justify-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold min-h-10"
-                  style={{ background: '#EA580C', color: '#111111', opacity: edition.brief.sections.length ? 1 : 0.4 }}
+                  style={{ background: '#EA580C', color: '#FFFFFF', opacity: edition.brief.sections.length ? 1 : 0.4 }}
                 >
-                  {audioOn ? <PauseIcon fill="#111111" /> : <PlayIcon fill="#111111" />}
+                  {audioOn ? <PauseIcon fill="#FFFFFF" /> : <PlayIcon fill="#FFFFFF" />}
                   {audioBusy ? 'Starting…' : audioOn ? 'Stop brief' : 'Today’s brief'}
                 </button>
               </div>
@@ -701,7 +701,7 @@ function StoryPage({ story, onBack }: { story: StoryCard; onBack: () => void }) 
         className="inline-flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-semibold mb-8 min-h-10"
         style={{
           background: listening ? '#EA580C' : '#17172A',
-          color: listening ? '#111111' : '#EEE8E0',
+          color: '#EEE8E0',
           border: listening ? 'none' : '1px solid rgba(255,255,255,0.12)',
           opacity: canListen ? 1 : 0.4,
         }}
@@ -792,7 +792,7 @@ function ProfilePage({
         onClick={onNext}
         disabled={!locations.length}
         className="w-full sm:w-auto px-8 py-4 rounded-xl text-base font-semibold min-h-12"
-        style={{ background: '#EA580C', color: '#111111', opacity: locations.length ? 1 : 0.35 }}
+        style={{ background: '#EA580C', color: '#FFFFFF', opacity: locations.length ? 1 : 0.35 }}
       >
         Next →
       </button>
