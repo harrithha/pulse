@@ -4,8 +4,37 @@ import { cleanArticleParagraphs } from './articleText'
 type ArticleResult = { title?: string; image?: string; paragraphs: string[]; error?: string }
 
 const ARTICLE_TTL = 12 * 60 * 1000
+const EDITION_STORE = 'pulse-edition'
+const EDITION_TTL = 6 * 60 * 60 * 1000
 const articleCache = new Map<string, { at: number; data: ArticleResult }>()
 const articleInflight = new Map<string, Promise<ArticleResult>>()
+const editionInflight = new Map<string, Promise<NewsPayload>>()
+
+function prefsKey(locations: string[], topics: string[]) {
+  return `${[...locations].sort().join('|')}::${[...topics].sort().join('|')}`
+}
+
+export function readCachedEdition(locations: string[], topics: string[]): NewsPayload | null {
+  try {
+    const raw = localStorage.getItem(EDITION_STORE)
+    if (!raw) return null
+    const row = JSON.parse(raw) as { key: string; at: number; data: NewsPayload }
+    if (row.key !== prefsKey(locations, topics)) return null
+    if (!row.data?.shelves?.length) return null
+    if (Date.now() - row.at > EDITION_TTL) return null
+    return row.data
+  } catch {
+    return null
+  }
+}
+
+export function writeCachedEdition(locations: string[], topics: string[], data: NewsPayload) {
+  try {
+    localStorage.setItem(EDITION_STORE, JSON.stringify({ key: prefsKey(locations, topics), at: Date.now(), data }))
+  } catch {
+    /* quota */
+  }
+}
 
 export async function loadEdition(
   locations: string[],
@@ -18,13 +47,26 @@ export async function loadEdition(
     topics: topics.join(','),
   })
   if (fresh) params.set('fresh', '1')
-  const res = await fetch(`/api/news?${params.toString()}`, { signal })
-  if (!res.ok) {
-    throw new Error('Could not load today’s edition from live news sources.')
-  }
-  const data = (await res.json()) as NewsPayload & { error?: string }
-  if (data.error) throw new Error(data.error)
-  return data
+  const key = `${prefsKey(locations, topics)}::${fresh ? '1' : '0'}`
+  const pending = editionInflight.get(key)
+  if (pending && !signal) return pending
+  const work = (async () => {
+    const res = await fetch(`/api/news?${params.toString()}`, {
+      signal,
+      cache: fresh ? 'no-store' : 'default',
+    })
+    if (!res.ok) {
+      throw new Error('Could not load today’s edition from live news sources.')
+    }
+    const data = (await res.json()) as NewsPayload & { error?: string }
+    if (data.error) throw new Error(data.error)
+    writeCachedEdition(locations, topics, data)
+    return data
+  })().finally(() => {
+    if (editionInflight.get(key) === work) editionInflight.delete(key)
+  })
+  editionInflight.set(key, work)
+  return work
 }
 
 export function emptyEdition(): NewsPayload {

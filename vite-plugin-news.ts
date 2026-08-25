@@ -400,12 +400,12 @@ function parseRss(xml: string, shelf: string, publisherHint?: string): RawItem[]
   return items
 }
 
-async function fetchText(url: string, timeoutMs = 9000, accept = 'application/rss+xml, application/xml, text/xml, text/html, */*') {
+async function fetchText(url: string, timeoutMs = 3200, accept = 'application/rss+xml, application/xml, text/xml, text/html, */*') {
   const page = await fetchPage(url, timeoutMs, accept)
   return page?.html ?? null
 }
 
-async function fetchPage(url: string, timeoutMs = 9000, accept = 'text/html, */*') {
+async function fetchPage(url: string, timeoutMs = 3200, accept = 'text/html, */*') {
   const ctrl = new AbortController()
   const timer = setTimeout(() => ctrl.abort(), timeoutMs)
   try {
@@ -469,7 +469,7 @@ async function resolveArticleUrl(url: string) {
 
 async function ogImage(url: string) {
   if (!url) return
-  const html = await fetchText(url, 4500, 'text/html')
+  const html = await fetchText(url, 1800, 'text/html')
   if (!html) return
   const match =
     html.match(/<meta[^>]+property=["']og:image(?::secure_url)?["'][^>]*content=["']([^"']+)/i) ||
@@ -479,16 +479,13 @@ async function ogImage(url: string) {
 }
 
 async function fillImages(stories: Story[]) {
-  const missing = stories.filter(story => !story.image).slice(0, 28)
-  let index = 0
-  const workers = Array.from({ length: Math.min(5, missing.length) }, async () => {
-    while (index < missing.length) {
-      const story = missing[index++]
+  const missing = stories.filter(story => !story.image).slice(0, 10)
+  await Promise.all(
+    missing.map(async story => {
       const image = await ogImage(story.url)
       if (image) story.image = image
-    }
-  })
-  await Promise.all(workers)
+    }),
+  )
 }
 
 function allowedHost(url: string) {
@@ -947,7 +944,10 @@ async function buildEdition(locations: string[], topics: string[]) {
     .sort((a, b) => b.sources - a.sources || Date.parse(b.publishedAt) - Date.parse(a.publishedAt))
     .slice(0, 6)
 
-  await fillImages(shelves.flatMap(s => s.stories))
+  await Promise.race([
+    fillImages(shelves.flatMap(s => s.stories).slice(0, 18)),
+    new Promise<void>(resolve => setTimeout(resolve, 800)),
+  ])
 
   const brief = buildBrief(shelves)
   return {
@@ -1004,10 +1004,13 @@ export async function handleNews(req: IncomingMessage, res: ServerResponse) {
       .filter(Boolean)
     const fresh = url.searchParams.get('fresh') === '1'
     const key = `${locations.join('|')}::${topics.join('|')}::${new Date().toISOString().slice(0, 10)}`
+    const cacheControl = fresh
+      ? 'no-store'
+      : 'public, s-maxage=180, stale-while-revalidate=600'
     const hit = cache.get(key)
     if (!fresh && hit && Date.now() - hit.at < CACHE_MS) {
       res.setHeader('Content-Type', 'application/json; charset=utf-8')
-      res.setHeader('Cache-Control', 'no-store')
+      res.setHeader('Cache-Control', cacheControl)
       res.end(hit.body)
       return
     }
@@ -1015,7 +1018,7 @@ export async function handleNews(req: IncomingMessage, res: ServerResponse) {
     const body = JSON.stringify(payload)
     cache.set(key, { at: Date.now(), body })
     res.setHeader('Content-Type', 'application/json; charset=utf-8')
-    res.setHeader('Cache-Control', 'no-store')
+    res.setHeader('Cache-Control', cacheControl)
     res.end(body)
   } catch (err) {
     res.statusCode = 500

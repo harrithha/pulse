@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
-import { emptyEdition, loadEdition, prefetchStoryArticle } from './lib/news'
+import { emptyEdition, loadEdition, prefetchStoryArticle, readCachedEdition } from './lib/news'
 import { cleanArticleParagraphs } from './lib/articleText'
 import { readPrefs, readSession, writePrefs } from './lib/session'
-import { canSpeak, loadTtsStatus, speakSections, type SpeechHandle } from './lib/speech'
+import { canSpeak, packScriptGroups, prefetchSpeech, speakSections, type SpeechHandle } from './lib/speech'
 import type { NewsPayload, Screen, Session, StoryCard, Tab } from './types'
 
 const CITIES = ['Pune', 'Mumbai', 'Bengaluru', 'Chennai', 'Hyderabad', 'Delhi', 'Kolkata', 'Ahmedabad']
@@ -504,15 +504,14 @@ function HomePage({
 
   useEffect(() => () => speech.current?.stop(), [])
   useEffect(() => {
-    void loadTtsStatus()
-  }, [])
-  useEffect(() => {
-    const opener = liveBriefOpener(edition.brief.sections[0]?.script || '')
-    if (!opener) return
-    const t = window.setTimeout(() => {
-      void fetch(`/api/tts?speak=${encodeURIComponent(opener)}`).then(r => r.arrayBuffer()).catch(() => undefined)
-    }, 300)
-    return () => window.clearTimeout(t)
+    const scripts = edition.brief.sections
+      .map((s, i) => {
+        const script = s.script.replace(/\s+/g, ' ').trim()
+        return i === 0 ? liveBriefOpener(script) : script
+      })
+      .filter(Boolean)
+    const packed = packScriptGroups(scripts)
+    packed.slice(0, 2).forEach(group => prefetchSpeech(group))
   }, [edition.fetchedAt])
 
   const toggleAudio = () => {
@@ -895,8 +894,12 @@ export default function App() {
   useEffect(() => {
     const existing = readSession()
     const prefs = readPrefs()
+    const locs = prefs?.locations?.length ? prefs.locations : ['Pune', 'Maharashtra', 'India', 'World']
+    const topics = prefs?.topics?.length ? prefs.topics : ['Technology', 'Business', 'Sports']
     if (prefs?.locations?.length) setSelLoc(new Set(prefs.locations))
     if (prefs?.topics) setSelTopics(new Set(prefs.topics))
+    const cached = readCachedEdition(locs, topics)
+    if (cached?.shelves.length) setEdition(cached)
     setSession(existing ?? GUEST_SESSION)
     setOnboarded(true)
     const route = parsePath(window.location.pathname)
@@ -927,12 +930,21 @@ export default function App() {
   useEffect(() => {
     if (!hydrated || !session || !onboarded) return
     const ctrl = new AbortController()
-    setLoading(true)
+    const locs = [...selLoc]
+    const topics = [...selTopics]
+    const cached = readCachedEdition(locs, topics)
+    if (cached?.shelves.length) {
+      setEdition(cached)
+      setLoading(false)
+    } else {
+      setLoading(true)
+    }
     setError(null)
-    loadEdition([...selLoc], [...selTopics], ctrl.signal, refreshNonce > 0)
+    loadEdition(locs, topics, ctrl.signal, refreshNonce > 0)
       .then(setEdition)
       .catch(err => {
         if ((err as Error).name === 'AbortError') return
+        if (cached?.shelves.length) return
         setError(err instanceof Error ? err.message : 'Could not load today’s edition.')
       })
       .finally(() => setLoading(false))

@@ -107,25 +107,49 @@ export function packScriptGroups(parts: string[], firstMax = 240, max = 520) {
   return groups
 }
 
+const ttsCache = new Map<string, Promise<Blob | null>>()
+
+function textsKey(texts: string[]) {
+  return texts.join('\u0001')
+}
+
 async function fetchSpeechify(texts: string[], signal: AbortSignal) {
-  for (let attempt = 0; attempt < 2; attempt++) {
-    const res = await fetch('/api/tts', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ texts }),
-      signal,
-    })
-    if (!res.ok) {
-      if (attempt === 0 && !signal.aborted) continue
-      return null
-    }
-    const blob = await res.blob()
-    if (!blob.size) return null
-    const type = res.headers.get('content-type') || ''
-    if (type.includes('json')) return null
-    return blob
-  }
-  return null
+  const res = await fetch('/api/tts', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ texts }),
+    signal,
+  })
+  if (!res.ok) return null
+  const blob = await res.blob()
+  if (!blob.size) return null
+  const type = res.headers.get('content-type') || ''
+  if (type.includes('json')) return null
+  return blob
+}
+
+function getSpeechBlob(texts: string[], signal: AbortSignal) {
+  const key = textsKey(texts)
+  const hit = ttsCache.get(key)
+  if (hit) return hit
+  const work = fetchSpeechify(texts, signal).then(
+    blob => {
+      if (!blob) ttsCache.delete(key)
+      return blob
+    },
+    err => {
+      ttsCache.delete(key)
+      throw err
+    },
+  )
+  ttsCache.set(key, work)
+  return work
+}
+
+export function prefetchSpeech(texts: string[]) {
+  const packed = texts.map(t => t.replace(/\s+/g, ' ').trim()).filter(Boolean)
+  if (!packed.length) return
+  void getSpeechBlob(packed, new AbortController().signal)
 }
 
 const SILENCE_WAV =
@@ -256,8 +280,8 @@ export function speakSections(
 
     try {
       onIndex(startIndex)
-      let next = packed.length > 1 ? fetchSpeechify(packed[1], ctrl.signal) : null
-      const first = await fetchSpeechify(packed[0], ctrl.signal)
+      let next = packed.length > 1 ? getSpeechBlob(packed[1], ctrl.signal) : null
+      const first = await getSpeechBlob(packed[0], ctrl.signal)
       if (!first) {
         finish()
         return
@@ -266,12 +290,12 @@ export function speakSections(
       for (let i = 1; i < packed.length; i++) {
         if (stopped) return
         let blob = await next
-        if (!blob && !stopped) blob = await fetchSpeechify(packed[i], ctrl.signal)
+        if (!blob && !stopped) blob = await getSpeechBlob(packed[i], ctrl.signal)
         if (!blob) {
           finish()
           return
         }
-        next = i + 1 < packed.length ? fetchSpeechify(packed[i + 1], ctrl.signal) : null
+        next = i + 1 < packed.length ? getSpeechBlob(packed[i + 1], ctrl.signal) : null
         onIndex(startIndex + i)
         await playBlob(blob, audio, ctrl.signal)
       }
