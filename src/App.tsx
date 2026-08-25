@@ -8,10 +8,6 @@ import type { NewsPayload, Screen, Session, StoryCard, Tab } from './types'
 const CITIES = ['Pune', 'Mumbai', 'Bengaluru', 'Chennai', 'Hyderabad', 'Delhi', 'Kolkata', 'Ahmedabad']
 const STATES = ['Maharashtra', 'Tamil Nadu', 'Karnataka', 'Telangana', 'Gujarat', 'Rajasthan']
 const TOPICS = ['Technology', 'AI', 'Business', 'Startups', 'Sports', 'Entertainment', 'Science', 'Politics', 'Finance']
-const NAV_ITEMS: { id: Tab; label: string }[] = [
-  { id: 'home', label: 'Home' },
-  { id: 'profile', label: 'Profile' },
-]
 
 function dayGreeting(at = new Date()) {
   const hour = at.getHours()
@@ -226,6 +222,7 @@ function SiteHeader({
   onRefresh: () => void
   refreshing: boolean
 }) {
+  const editing = tab === 'profile'
   return (
     <header
       className="sticky top-0 z-50"
@@ -236,68 +233,34 @@ function SiteHeader({
         paddingTop: 'env(safe-area-inset-top)',
       }}
     >
-      <div className="px-4 sm:px-5 md:px-10 h-14 md:h-16 flex items-center gap-3 md:gap-8">
+      <div className="px-4 sm:px-5 md:px-10 h-14 md:h-16 flex items-center gap-2 sm:gap-3">
         <button onClick={() => onNavigate('home')} className="shrink-0">
           <BrandMark size={24} />
         </button>
-        <nav className="hidden md:flex items-center gap-1 flex-1 min-w-0">
-          {NAV_ITEMS.map(item => {
-            const active = tab === item.id
-            return (
-              <button
-                key={item.id}
-                onClick={() => onNavigate(item.id)}
-                className="px-3 py-2 rounded-lg text-sm font-medium"
-                style={{
-                  background: active ? 'rgba(245,166,35,0.14)' : 'transparent',
-                  color: active ? '#F5A623' : '#8A8AA0',
-                }}
-              >
-                {item.label}
-              </button>
-            )
-          })}
-        </nav>
-        <button
-          onClick={onRefresh}
-          disabled={refreshing}
-          className="ml-auto px-3 py-1.5 rounded-lg text-xs sm:text-sm min-h-9"
-          style={{ color: '#F5A623', border: '1px solid rgba(245,166,35,0.35)', background: '#17172A', fontWeight: 600 }}
-        >
-          {refreshing ? 'Updating…' : 'Refresh'}
-        </button>
+        <div className="ml-auto flex items-center gap-2 sm:gap-2.5">
+          <button
+            onClick={() => onNavigate('profile')}
+            className="px-3 py-1.5 rounded-lg text-xs sm:text-sm min-h-9 whitespace-nowrap"
+            style={{
+              color: editing ? '#F5A623' : '#C4B9A8',
+              border: editing ? '1px solid rgba(245,166,35,0.45)' : '1px solid rgba(255,255,255,0.1)',
+              background: editing ? 'rgba(245,166,35,0.12)' : '#17172A',
+              fontWeight: 600,
+            }}
+          >
+            Edit topics
+          </button>
+          <button
+            onClick={onRefresh}
+            disabled={refreshing}
+            className="px-3 py-1.5 rounded-lg text-xs sm:text-sm min-h-9"
+            style={{ color: '#F5A623', border: '1px solid rgba(245,166,35,0.35)', background: '#17172A', fontWeight: 600 }}
+          >
+            {refreshing ? 'Updating…' : 'Refresh'}
+          </button>
+        </div>
       </div>
     </header>
-  )
-}
-
-function BottomNav({ tab, onNavigate }: { tab: Tab; onNavigate: (next: Tab) => void }) {
-  return (
-    <nav
-      className="md:hidden fixed bottom-0 inset-x-0 z-50"
-      style={{
-        background: 'rgba(7,7,12,0.94)',
-        backdropFilter: 'blur(18px)',
-        borderTop: '1px solid rgba(255,255,255,0.08)',
-        paddingBottom: 'env(safe-area-inset-bottom)',
-      }}
-    >
-      <div className="grid grid-cols-2 h-14">
-        {NAV_ITEMS.map(item => {
-          const active = tab === item.id
-          return (
-            <button
-              key={item.id}
-              onClick={() => onNavigate(item.id)}
-              className="text-[11px] font-medium"
-              style={{ color: active ? '#F5A623' : '#8A8AA0' }}
-            >
-              {item.label}
-            </button>
-          )
-        })}
-      </div>
-    </nav>
   )
 }
 
@@ -544,7 +507,7 @@ function HomePage({
   }
 
   return (
-    <div className="pb-24 md:pb-12">
+    <div className="pb-10 md:pb-12">
       <section className="relative">
         <div className="max-w-[1320px] mx-auto px-4 sm:px-5 md:px-10 pt-4 sm:pt-5 pb-2">
           <div
@@ -798,9 +761,9 @@ function ProfilePage({
   onEditTopics: () => void
 }) {
   return (
-    <div className="max-w-[760px] mx-auto px-4 sm:px-6 lg:px-8 py-8 sm:py-10 pb-24 md:pb-10">
-      <h1 className="font-serif text-[#EEE8E0] text-[32px] sm:text-[40px] mb-2">Profile</h1>
-      <p className="text-sm mb-8" style={{ color: '#9B968F' }}>Choose which rows appear on Home.</p>
+    <div className="max-w-[760px] mx-auto px-4 sm:px-6 lg:px-8 py-8 sm:py-10 pb-10">
+      <h1 className="font-serif text-[#EEE8E0] text-[32px] sm:text-[40px] mb-2">Edit topics</h1>
+      <p className="text-sm mb-8" style={{ color: '#9B968F' }}>Pick the cities and topics that show up on Home.</p>
       <div className="rounded-2xl p-5 mb-4" style={{ background: '#141424', border: '1px solid rgba(255,255,255,0.06)' }}>
         <div className="flex items-center justify-between mb-3">
           <div className="text-[10px] font-semibold tracking-[0.22em] uppercase" style={{ color: '#8A8AA0' }}>Locations</div>
@@ -1040,7 +1003,6 @@ export default function App() {
       {screen === 'story' && activeStory && (
         <StoryPage story={activeStory} onBack={backInPulse} />
       )}
-      {screen !== 'story' && <BottomNav tab={tab} onNavigate={goTab} />}
     </AppShell>
   )
 }
