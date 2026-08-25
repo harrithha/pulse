@@ -1,7 +1,7 @@
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { Plugin, PreviewServer, ViteDevServer } from 'vite'
-import { handleTts, type TtsOptions } from './pulse-tts'
-import { cleanArticleParagraphs, isJunkParagraph } from './src/lib/articleText'
+import { handleTts, type TtsOptions } from './pulse-tts.js'
+import { cleanArticleParagraphs, isJunkParagraph } from './src/lib/articleText.js'
 
 const UA =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'

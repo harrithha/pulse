@@ -6,8 +6,17 @@
     { "source": "/((?!api/).*)", "destination": "/index.html" }
   ],
   "functions": {
-    "api/news.ts": { "maxDuration": 60 },
-    "api/article.ts": { "maxDuration": 30 },
-    "api/tts.ts": { "maxDuration": 60 }
+    "api/news.ts": {
+      "maxDuration": 60,
+      "includeFiles": "{vite-plugin-news.ts,pulse-tts.ts,src/lib/articleText.ts}"
+    },
+    "api/article.ts": {
+      "maxDuration": 30,
+      "includeFiles": "{vite-plugin-news.ts,pulse-tts.ts,src/lib/articleText.ts}"
+    },
+    "api/tts.ts": {
+      "maxDuration": 60,
+      "includeFiles": "pulse-tts.ts"
+    }
   }
 }

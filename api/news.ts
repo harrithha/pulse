@@ -1,8 +1,8 @@
 import type { IncomingMessage, ServerResponse } from 'node:http'
-import { handleNews } from '../vite-plugin-news'
+import { handleNews } from '../vite-plugin-news.js'
 
 export const config = { maxDuration: 60 }
 
-export default function handler(req: IncomingMessage, res: ServerResponse) {
-  void handleNews(req, res)
+export default async function handler(req: IncomingMessage, res: ServerResponse) {
+  await handleNews(req, res)
 }
