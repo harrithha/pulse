@@ -57,17 +57,25 @@ export function writePrefs(prefs: Prefs) {
 
 const LOC_TAB_KEY = 'pulse-loc-tab'
 
-export function readTabLocationOk() {
+export function readTabLocationGranted() {
   try {
-    return sessionStorage.getItem(LOC_TAB_KEY) === '1'
+    return sessionStorage.getItem(LOC_TAB_KEY) === 'granted'
   } catch {
     return false
   }
 }
 
-export function writeTabLocationOk() {
+export function readTabLocationAsked() {
   try {
-    sessionStorage.setItem(LOC_TAB_KEY, '1')
+    return sessionStorage.getItem(LOC_TAB_KEY) === 'granted' || sessionStorage.getItem(LOC_TAB_KEY) === 'denied'
+  } catch {
+    return false
+  }
+}
+
+export function writeTabLocation(status: 'granted' | 'denied') {
+  try {
+    sessionStorage.setItem(LOC_TAB_KEY, status)
   } catch {
     /* private mode */
   }

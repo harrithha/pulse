@@ -16,7 +16,7 @@ import {
   type HomePlace,
   type StateName,
 } from './lib/places'
-import { readPrefs, readSession, writePrefs, applyTheme, readTabLocationOk, writeTabLocationOk, type ThemeName } from './lib/session'
+import { readPrefs, readSession, writePrefs, applyTheme, readTabLocationGranted, readTabLocationAsked, writeTabLocation, type ThemeName } from './lib/session'
 import { canSpeak, packScriptGroups, prefetchSpeech, speakSections, type SpeechHandle } from './lib/speech'
 import type { NewsPayload, Screen, Session, StoryCard, Tab } from './types'
 
@@ -400,7 +400,7 @@ function SiteHeader({
   const editing = tab === 'profile'
   const city = home.city
   const state = home.state
-  const locLabel = city || (detecting ? 'Locating…' : 'India')
+  const locLabel = city || (detecting ? 'Locating…' : 'World')
   const locTitle = homePlaceLabel(home) || locLabel
   return (
     <header className="sticky top-0 z-50 pulse-header">
@@ -484,7 +484,7 @@ function OnboardingLocation({
             ? 'Waiting for location permission…'
             : found
               ? `Your local rows stay on: ${found}. Add anywhere else you follow.`
-              : 'We’ll show India news until you allow location or pick a city yourself.'}
+              : 'We’ll show World news until the browser has your location, or you pick a city.'}
         </p>
         <button
           type="button"
@@ -493,7 +493,7 @@ function OnboardingLocation({
           className="mb-8 sm:mb-10 text-sm font-semibold min-h-10"
           style={{ color: 'var(--amber)' }}
         >
-          {detecting ? 'Waiting for permission…' : found ? 'Update from my location' : 'Allow location'}
+          {detecting ? 'Locating…' : found ? 'Update from my location' : 'Use my location'}
         </button>
         <div className="space-y-8 mb-10 sm:mb-12">
           <div>
@@ -665,59 +665,6 @@ function searchStories(edition: NewsPayload, query: string, topic: string, home?
     .filter(s => topic === 'All' || shelfTitle(s.label) === topic)
     .flatMap(s => s.stories)
     .filter(s => !q || `${s.headline} ${s.summary} ${s.category} ${s.shelf} ${sourceName(s)}`.toLowerCase().includes(q))
-}
-
-function LocationAsk({
-  detecting,
-  onAllow,
-  onSkip,
-  onChoose,
-}: {
-  detecting: boolean
-  onAllow: () => void
-  onSkip: () => void
-  onChoose: () => void
-}) {
-  return (
-    <div className="max-w-[1320px] mx-auto px-4 sm:px-5 md:px-10 pt-4">
-      <div
-        className="rounded-2xl px-4 py-4 sm:px-5 sm:py-4"
-        style={{ background: 'var(--hero)', border: '1px solid var(--amber-border)' }}
-      >
-        <div className="text-sm font-semibold mb-1" style={{ color: 'var(--ink)' }}>Use your location for local news?</div>
-        <p className="text-sm mb-3" style={{ color: 'var(--muted)' }}>
-          Pulse only uses your city if you allow it on this visit. Otherwise you’ll see India news, and you can pick a place yourself.
-        </p>
-        <div className="flex flex-wrap gap-2">
-          <button
-            type="button"
-            onClick={onAllow}
-            disabled={detecting}
-            className="px-4 py-2 rounded-xl text-sm font-semibold min-h-10"
-            style={{ background: 'var(--orange)', color: '#FFFFFF' }}
-          >
-            {detecting ? 'Waiting for permission…' : 'Allow location'}
-          </button>
-          <button
-            type="button"
-            onClick={onSkip}
-            className="px-4 py-2 rounded-xl text-sm font-semibold min-h-10"
-            style={{ background: 'var(--elevated)', color: 'var(--ink)', border: '1px solid var(--border)' }}
-          >
-            Show India
-          </button>
-          <button
-            type="button"
-            onClick={onChoose}
-            className="px-4 py-2 rounded-xl text-sm font-semibold min-h-10"
-            style={{ color: 'var(--amber)' }}
-          >
-            Choose a city
-          </button>
-        </div>
-      </div>
-    </div>
-  )
 }
 
 function HomePage({
@@ -1085,7 +1032,7 @@ function ProfilePage({
           ? 'Waiting for location permission…'
           : found
             ? `${found} stay on as your local rows. Tap other chips to add or remove them.`
-            : 'Showing India until you allow location or pick a city. Tap a chip to follow a place.'}
+            : 'Showing World news until location is allowed. Tap a chip to follow a place.'}
       </p>
       <button
         type="button"
@@ -1094,7 +1041,7 @@ function ProfilePage({
         className="text-sm font-semibold mb-8 min-h-10"
         style={{ color: 'var(--amber)' }}
       >
-        {detecting ? 'Waiting for permission…' : found ? 'Update from my location' : 'Allow location'}
+        {detecting ? 'Locating…' : found ? 'Update from my location' : 'Use my location'}
       </button>
       <div className="rounded-2xl p-5 mb-4" style={{ background: 'var(--surface)', border: '1px solid var(--border)' }}>
         <div className="text-[10px] font-semibold tracking-[0.22em] uppercase mb-3" style={{ color: 'var(--dim)' }}>Cities</div>
@@ -1140,11 +1087,10 @@ const GUEST_SESSION: Session = { name: '', email: '', loggedInAt: '' }
 export default function App() {
   const [screen, setScreen] = useState<Screen>('home')
   const [session, setSession] = useState<Session | null>(GUEST_SESSION)
-  const [selLoc, setSelLoc] = useState<Set<string>>(new Set(['India', 'World']))
+  const [selLoc, setSelLoc] = useState<Set<string>>(new Set(['World', 'India']))
   const [selTopics, setSelTopics] = useState<Set<string>>(new Set(['Technology', 'Business', 'Sports']))
   const [home, setHome] = useState<HomePlace>({})
   const [detecting, setDetecting] = useState(false)
-  const [locationSkipped, setLocationSkipped] = useState(false)
   const [tabLocationOk, setTabLocationOk] = useState(false)
   const [theme, setTheme] = useState<ThemeName>(() =>
     typeof document !== 'undefined' && document.documentElement.dataset.theme === 'light' ? 'light' : 'dark',
@@ -1198,10 +1144,10 @@ export default function App() {
   useEffect(() => {
     const existing = readSession()
     const prefs = readPrefs()
-    const tabOk = readTabLocationOk()
-    setTabLocationOk(tabOk)
-    const savedHome: HomePlace = tabOk ? { city: prefs?.homeCity, state: prefs?.homeState } : {}
-    const locs = tabOk && prefs?.locations?.length ? prefs.locations : ['India', 'World']
+    const granted = readTabLocationGranted()
+    setTabLocationOk(granted)
+    const savedHome: HomePlace = granted ? { city: prefs?.homeCity, state: prefs?.homeState } : {}
+    const locs = granted && prefs?.locations?.length ? prefs.locations : ['World', 'India']
     const topics = prefs?.topics?.length ? prefs.topics : ['Technology', 'Business', 'Sports']
     setHome(savedHome)
     if (prefs?.theme === 'light' || prefs?.theme === 'dark') {
@@ -1281,10 +1227,15 @@ export default function App() {
     })
   }
 
+  const applyWorldDefault = () => {
+    setHome({})
+    setSelLoc(new Set(['World', 'India']))
+    writeTabLocation('denied')
+  }
+
   const markTabLocationOk = () => {
-    writeTabLocationOk()
+    writeTabLocation('granted')
     setTabLocationOk(true)
-    setLocationSkipped(false)
   }
 
   const runDetect = () => {
@@ -1296,24 +1247,16 @@ export default function App() {
           markTabLocationOk()
           return
         }
-        setLocationSkipped(true)
-        setSelLoc(prev => {
-          const next = new Set(prev)
-          next.add('India')
-          return next
-        })
+        applyWorldDefault()
       })
       .finally(() => setDetecting(false))
   }
 
-  const skipLocation = () => {
-    setLocationSkipped(true)
-    setSelLoc(prev => {
-      const next = new Set(prev)
-      next.add('India')
-      return next.size ? next : new Set(['India', 'World'])
-    })
-  }
+  useEffect(() => {
+    if (!hydrated) return
+    if (readTabLocationAsked()) return
+    runDetect()
+  }, [hydrated])
 
   const toggleLoc = (loc: string) =>
     setSelLoc(prev => {
@@ -1335,7 +1278,7 @@ export default function App() {
           markTabLocationOk()
         }
       }
-      if (!n.size) n.add('India')
+      if (!n.size) n.add('World')
       return n
     })
 
@@ -1418,17 +1361,6 @@ export default function App() {
         }}
         refreshing={loading}
       />
-      {screen === 'home' && !tabLocationOk && !locationSkipped && (
-        <LocationAsk
-          detecting={detecting}
-          onAllow={() => runDetect()}
-          onSkip={skipLocation}
-          onChoose={() => {
-            setLocationSkipped(true)
-            pushRoute('profile')
-          }}
-        />
-      )}
       {screen === 'home' && (
         <HomePage
           edition={edition}
