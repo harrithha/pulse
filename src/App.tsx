@@ -16,7 +16,7 @@ import {
   type HomePlace,
   type StateName,
 } from './lib/places'
-import { readPrefs, readSession, writePrefs, applyTheme, type ThemeName } from './lib/session'
+import { readPrefs, readSession, writePrefs, applyTheme, readTabLocationOk, writeTabLocationOk, type ThemeName } from './lib/session'
 import { canSpeak, packScriptGroups, prefetchSpeech, speakSections, type SpeechHandle } from './lib/speech'
 import type { NewsPayload, Screen, Session, StoryCard, Tab } from './types'
 
@@ -686,7 +686,7 @@ function LocationAsk({
       >
         <div className="text-sm font-semibold mb-1" style={{ color: 'var(--ink)' }}>Use your location for local news?</div>
         <p className="text-sm mb-3" style={{ color: 'var(--muted)' }}>
-          Pulse only uses your city if you allow it. Otherwise you’ll see India news, and you can pick a place yourself.
+          Pulse only uses your city if you allow it on this visit. Otherwise you’ll see India news, and you can pick a place yourself.
         </p>
         <div className="flex flex-wrap gap-2">
           <button
@@ -1145,6 +1145,7 @@ export default function App() {
   const [home, setHome] = useState<HomePlace>({})
   const [detecting, setDetecting] = useState(false)
   const [locationSkipped, setLocationSkipped] = useState(false)
+  const [tabLocationOk, setTabLocationOk] = useState(false)
   const [theme, setTheme] = useState<ThemeName>(() =>
     typeof document !== 'undefined' && document.documentElement.dataset.theme === 'light' ? 'light' : 'dark',
   )
@@ -1197,8 +1198,10 @@ export default function App() {
   useEffect(() => {
     const existing = readSession()
     const prefs = readPrefs()
-    const savedHome: HomePlace = { city: prefs?.homeCity, state: prefs?.homeState }
-    const locs = prefs?.locations?.length ? prefs.locations : ['India', 'World']
+    const tabOk = readTabLocationOk()
+    setTabLocationOk(tabOk)
+    const savedHome: HomePlace = tabOk ? { city: prefs?.homeCity, state: prefs?.homeState } : {}
+    const locs = tabOk && prefs?.locations?.length ? prefs.locations : ['India', 'World']
     const topics = prefs?.topics?.length ? prefs.topics : ['Technology', 'Business', 'Sports']
     setHome(savedHome)
     if (prefs?.theme === 'light' || prefs?.theme === 'dark') {
@@ -1207,7 +1210,6 @@ export default function App() {
     }
     setSelLoc(mergeHomeLocations(locs, savedHome))
     if (prefs?.topics) setSelTopics(new Set(prefs.topics))
-    setLocationSkipped(Boolean(prefs?.locationSkipped))
     const cached = readCachedEdition([...mergeHomeLocations(locs, savedHome)], topics)
     if (cached?.shelves.length) setEdition(cached)
     setSession(existing ?? GUEST_SESSION)
@@ -1230,16 +1232,16 @@ export default function App() {
 
   useEffect(() => {
     if (!hydrated) return
+    const prev = readPrefs()
     writePrefs({
-      locations: [...selLoc],
       topics: [...selTopics],
       onboarded,
-      homeCity: home.city,
-      homeState: home.state,
       theme,
-      locationSkipped,
+      locations: tabLocationOk ? [...selLoc] : prev?.locations,
+      homeCity: tabLocationOk ? home.city : prev?.homeCity,
+      homeState: tabLocationOk ? home.state : prev?.homeState,
     })
-  }, [selLoc, selTopics, onboarded, home, theme, locationSkipped, hydrated])
+  }, [selLoc, selTopics, onboarded, home, theme, tabLocationOk, hydrated])
 
   useEffect(() => {
     if (!hydrated || !session || !onboarded) return
@@ -1279,13 +1281,19 @@ export default function App() {
     })
   }
 
+  const markTabLocationOk = () => {
+    writeTabLocationOk()
+    setTabLocationOk(true)
+    setLocationSkipped(false)
+  }
+
   const runDetect = () => {
     setDetecting(true)
     void detectHomePlace()
       .then(found => {
         if (found) {
           applyDetectedHome(found, true)
-          setLocationSkipped(false)
+          markTabLocationOk()
           return
         }
         setLocationSkipped(true)
@@ -1321,10 +1329,10 @@ export default function App() {
           const state = CITY_TO_STATE[city]
           setHome({ city, state })
           if (state) n.add(state)
-          setLocationSkipped(true)
+          markTabLocationOk()
         } else if ((STATES as readonly string[]).includes(loc) && !home.city) {
           setHome(h => ({ ...h, state: loc as StateName }))
-          setLocationSkipped(true)
+          markTabLocationOk()
         }
       }
       if (!n.size) n.add('India')
@@ -1410,7 +1418,7 @@ export default function App() {
         }}
         refreshing={loading}
       />
-      {screen === 'home' && !home.city && !home.state && !locationSkipped && (
+      {screen === 'home' && !tabLocationOk && !locationSkipped && (
         <LocationAsk
           detecting={detecting}
           onAllow={() => runDetect()}

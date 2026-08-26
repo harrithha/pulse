@@ -10,7 +10,6 @@ export type Prefs = {
   homeCity?: City
   homeState?: StateName
   theme?: ThemeName
-  locationSkipped?: boolean
 }
 
 export function applyTheme(theme: ThemeName) {
@@ -54,4 +53,22 @@ export function readPrefs() {
 
 export function writePrefs(prefs: Prefs) {
   localStorage.setItem(PREFS_KEY, JSON.stringify(prefs))
+}
+
+const LOC_TAB_KEY = 'pulse-loc-tab'
+
+export function readTabLocationOk() {
+  try {
+    return sessionStorage.getItem(LOC_TAB_KEY) === '1'
+  } catch {
+    return false
+  }
+}
+
+export function writeTabLocationOk() {
+  try {
+    sessionStorage.setItem(LOC_TAB_KEY, '1')
+  } catch {
+    /* private mode */
+  }
 }
