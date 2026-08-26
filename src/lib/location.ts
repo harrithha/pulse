@@ -1,14 +1,14 @@
 import { matchHomePlace, matchHomePlaceFromCoords, type HomePlace, type RawPlace } from './places'
 
-const FALLBACK_MS = 1_500
-const CACHED_GPS: PositionOptions = {
+const FALLBACK_MS = 2_000
+const FRESH_GPS: PositionOptions = {
   enableHighAccuracy: false,
-  timeout: 500,
-  maximumAge: 7 * 24 * 60 * 60 * 1000,
+  timeout: 10_000,
+  maximumAge: 30_000,
 }
 const PROMPT_GPS: PositionOptions = {
   enableHighAccuracy: false,
-  maximumAge: 7 * 24 * 60 * 60 * 1000,
+  maximumAge: 30_000,
 }
 
 async function fetchJson(url: string, signal: AbortSignal) {
@@ -158,17 +158,13 @@ function readGps(options: PositionOptions): Promise<{ lat: number; lon: number }
   })
 }
 
-function wait(ms: number) {
-  return new Promise<void>(resolve => window.setTimeout(resolve, ms))
-}
-
 function metroFromCoords(coords?: { lat: number; lon: number }) {
   if (!coords) return null
   const near = matchHomePlaceFromCoords(coords.lat, coords.lon)
   return near.city ? near : null
 }
 
-/** Browser prompt. The moment Allow fires, take a cached fix — do not wait for a new GPS lock. */
+/** Browser prompt. After Allow, wait for a current GPS fix — not a days-old cache or carrier IP. */
 export function askLocationAccess(): Promise<LocationAccess> {
   return new Promise(resolve => {
     let done = false
@@ -180,17 +176,17 @@ export function askLocationAccess(): Promise<LocationAccess> {
       resolve(result)
     }
 
-    const grantFast = () => {
-      void readGps(CACHED_GPS).then(coords => finish({ access: 'granted', coords }))
+    const grantWithFix = () => {
+      void readGps(FRESH_GPS).then(coords => finish({ access: 'granted', coords }))
     }
 
     void queryGeolocationPermission().then(state => {
       if (state === 'denied') finish({ access: 'denied' })
-      if (state === 'granted') grantFast()
+      if (state === 'granted') grantWithFix()
     })
     unsub = subscribeGeolocationPermission(state => {
       if (state === 'denied') finish({ access: 'denied' })
-      if (state === 'granted') grantFast()
+      if (state === 'granted') grantWithFix()
     })
 
     if (!navigator.geolocation) {
@@ -203,7 +199,7 @@ export function askLocationAccess(): Promise<LocationAccess> {
       err => {
         if (done) return
         if (err.code === err.PERMISSION_DENIED) finish({ access: 'denied' })
-        else grantFast()
+        else grantWithFix()
       },
       PROMPT_GPS,
     )
@@ -215,33 +211,22 @@ export type HomeDetectResult = {
   home: HomePlace | null
 }
 
-/** After Allow: cached GPS metro match, or the prefetched IP — whichever has a city first. */
+/** GPS city first. IP only if the phone could not get a current fix. */
 export async function detectHomePlace(): Promise<HomeDetectResult> {
   const access = await askLocationAccess()
   if (access.access !== 'granted') return { access: 'denied', home: null }
 
-  const instant = metroFromCoords(access.coords)
-  if (instant) return { access: 'granted', home: instant }
+  const coords = access.coords ?? (await readGps(FRESH_GPS))
+  const metro = metroFromCoords(coords)
+  if (metro) return { access: 'granted', home: metro }
 
-  const gpsP = readGps(CACHED_GPS)
-  const ipP = takeIpPlace()
-
-  const raced = await Promise.race([gpsP, wait(200).then(() => undefined)])
-  const quickGps = metroFromCoords(raced)
-  if (quickGps) return { access: 'granted', home: quickGps }
-
-  const ip = await ipP
-  if (ip?.city) return { access: 'granted', home: ip }
-
-  const gps = metroFromCoords(await gpsP)
-  if (gps) return { access: 'granted', home: gps }
-
-  const coords = access.coords ?? (await gpsP)
   if (coords) {
     const named = await lookupPlaceFromGps(coords)
+    if (named?.city) return { access: 'granted', home: named }
     if (hasPlace(named)) return { access: 'granted', home: named }
   }
-  return { access: 'granted', home: ip }
+
+  return { access: 'granted', home: await takeIpPlace() }
 }
 
 prefetchIpPlace()
