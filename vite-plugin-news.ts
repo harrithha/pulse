@@ -41,6 +41,7 @@ const ALLOWED_HOSTS = [
   'indianexpress.com',
   'livemint.com',
   'economictimes.indiatimes.com',
+  'economictimes.com',
   'cnbctv18.com',
   'cnbc.com',
 ]
@@ -402,7 +403,8 @@ function parseRss(xml: string, shelf: string, publisherHint?: string): RawItem[]
 }
 
 async function fetchText(url: string, timeoutMs = 3200, accept = 'application/rss+xml, application/xml, text/xml, text/html, */*') {
-  const page = await fetchPage(url, timeoutMs, accept)
+  const ms = /news\.google\.com/i.test(url) ? Math.min(timeoutMs, 1600) : timeoutMs
+  const page = await fetchPage(url, ms, accept)
   return page?.html ?? null
 }
 

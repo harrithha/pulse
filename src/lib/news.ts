@@ -119,8 +119,11 @@ export function emptyEdition(): NewsPayload {
 
 export async function loadArticle(url: string, signal?: AbortSignal) {
   const res = await fetch(`/api/article?url=${encodeURIComponent(url)}`, { signal })
-  if (!res.ok) throw new Error('Could not load the article.')
-  return (await res.json()) as ArticleResult
+  const data = (await res.json()) as ArticleResult
+  if (!res.ok && !data?.paragraphs?.length) {
+    throw new Error(data?.error || 'Could not load the article.')
+  }
+  return data
 }
 
 async function fetchBestArticle(story: { url: string; publishers: { url: string }[] }): Promise<ArticleResult> {

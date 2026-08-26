@@ -9,6 +9,9 @@ export function isJunkParagraph(text: string) {
   const widgets = (t.match(/\b(gold rate|silver rate|bank holidays?|public holidays?|petrol price|diesel price|cng price|lpg price|\baqi\b|weather in )\b/gi) || []).length
   if (widgets >= 2) return true
   if (/^(trending|related|more from|read more|top stories|visual stories)\b/i.test(t)) return true
+  if (/catch all the business news/i.test(t)) return true
+  if (/terms of service/i.test(t) && /privacy policy/i.test(t)) return true
+  if (/we won'?t sell or share your personal information/i.test(t)) return true
   return false
 }
 

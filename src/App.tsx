@@ -100,15 +100,29 @@ function prefetchStoryListen(story: StoryCard, paragraphs: string[] = []) {
   if (packed[1]) prefetchSpeech(packed[1])
 }
 
-function orderedShelves(shelves: NewsPayload['shelves'], home?: HomePlace) {
+function orderedShelves(shelves: NewsPayload['shelves'], home?: HomePlace, focus: string[] = []) {
   const citySet = new Set<string>(CITIES)
   const stateSet = new Set<string>(STATES)
+  const used = new Set<string>()
+  const focused: NewsPayload['shelves'] = []
+  for (const item of focus) {
+    const hit = shelves.find(shelf => {
+      if (used.has(shelf.label)) return false
+      const title = shelfTitle(shelf.label)
+      return title === item || shelf.label === item || shelf.label === `My City · ${item}`
+    })
+    if (hit) {
+      focused.push(hit)
+      used.add(hit.label)
+    }
+  }
   const homeCity: NewsPayload['shelves'] = []
   const cities: NewsPayload['shelves'] = []
   const homeState: NewsPayload['shelves'] = []
   const states: NewsPayload['shelves'] = []
   const topics: NewsPayload['shelves'] = []
   for (const shelf of shelves) {
+    if (used.has(shelf.label)) continue
     const title = shelfTitle(shelf.label)
     if (home?.city && title === home.city) homeCity.push(shelf)
     else if (citySet.has(title)) cities.push(shelf)
@@ -116,7 +130,7 @@ function orderedShelves(shelves: NewsPayload['shelves'], home?: HomePlace) {
     else if (stateSet.has(title)) states.push(shelf)
     else topics.push(shelf)
   }
-  return [...homeCity, ...cities, ...homeState, ...states, ...topics]
+  return [...focused, ...homeCity, ...cities, ...homeState, ...states, ...topics]
 }
 
 function NavChevron({ dir, size = 22 }: { dir: 'left' | 'right'; size?: number }) {
@@ -656,9 +670,9 @@ function ShelfRow({ title, stories, onOpen }: { title: string; stories: StoryCar
   )
 }
 
-function searchStories(edition: NewsPayload, query: string, topic: string, home?: HomePlace) {
+function searchStories(edition: NewsPayload, query: string, topic: string, home?: HomePlace, focus: string[] = []) {
   const q = query.trim().toLowerCase()
-  return orderedShelves(edition.shelves, home)
+  return orderedShelves(edition.shelves, home, focus)
     .filter(s => topic === 'All' || shelfTitle(s.label) === topic)
     .flatMap(s => s.stories)
     .filter(s => !q || `${s.headline} ${s.summary} ${s.category} ${s.shelf} ${sourceName(s)}`.toLowerCase().includes(q))
@@ -669,6 +683,7 @@ function HomePage({
   loading,
   error,
   home,
+  focus,
   onRetry,
   onStoryTap,
 }: {
@@ -676,6 +691,7 @@ function HomePage({
   loading: boolean
   error: string | null
   home: HomePlace
+  focus: string[]
   onRetry: () => void
   onStoryTap: (s: StoryCard) => void
 }) {
@@ -684,10 +700,10 @@ function HomePage({
   const [query, setQuery] = useState('')
   const [topic, setTopic] = useState('All')
   const speech = useRef<SpeechHandle | null>(null)
-  const rows = orderedShelves(edition.shelves, home)
+  const rows = orderedShelves(edition.shelves, home, focus)
   const labels = ['All', ...rows.map(s => shelfTitle(s.label))]
   const searching = Boolean(query.trim()) || topic !== 'All'
-  const results = searching ? searchStories(edition, query, topic, home) : []
+  const results = searching ? searchStories(edition, query, topic, home, focus) : []
 
   useEffect(() => () => speech.current?.stop(), [])
   useEffect(() => {
@@ -1086,6 +1102,7 @@ export default function App() {
   const [session, setSession] = useState<Session | null>(GUEST_SESSION)
   const [selLoc, setSelLoc] = useState<Set<string>>(new Set(['World', 'India']))
   const [selTopics, setSelTopics] = useState<Set<string>>(new Set(['Technology', 'Business', 'Sports']))
+  const [focusShelves, setFocusShelves] = useState<string[]>([])
   const [home, setHome] = useState<HomePlace>({})
   const [detecting, setDetecting] = useState(false)
   const [tabLocationOk, setTabLocationOk] = useState(false)
@@ -1284,21 +1301,32 @@ export default function App() {
     }
   }, [hydrated])
 
-  const toggleLoc = (loc: string) =>
+  const toggleLoc = (loc: string) => {
     setSelLoc(prev => {
-      const n = new Set(prev)
-      if (n.has(loc)) n.delete(loc)
-      else n.add(loc)
-      if (!n.size) n.add('World')
-      return n
+      const had = prev.has(loc)
+      setFocusShelves(focus => (had ? focus.filter(x => x !== loc) : [loc, ...focus.filter(x => x !== loc)]))
+      if (had) {
+        const n = new Set(prev)
+        n.delete(loc)
+        if (!n.size) n.add('World')
+        return n
+      }
+      return new Set([loc, ...prev])
     })
+  }
 
-  const toggleTopic = (t: string) =>
+  const toggleTopic = (t: string) => {
     setSelTopics(prev => {
-      const n = new Set(prev)
-      n.has(t) ? n.delete(t) : n.add(t)
-      return n
+      const had = prev.has(t)
+      setFocusShelves(focus => (had ? focus.filter(x => x !== t) : [t, ...focus.filter(x => x !== t)]))
+      if (had) {
+        const n = new Set(prev)
+        n.delete(t)
+        return n
+      }
+      return new Set([t, ...prev])
     })
+  }
 
   useEffect(() => {
     if (screen !== 'story' || activeStory) return
@@ -1378,6 +1406,7 @@ export default function App() {
           loading={loading}
           error={error}
           home={home}
+          focus={focusShelves}
           onRetry={() => setRefreshNonce(n => n + 1)}
           onStoryTap={handleStoryTap}
         />

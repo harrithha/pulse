@@ -23,6 +23,17 @@ test('Indian Express, TOI, Mint, and CNBC get AMP variants', () => {
   assert.equal(publisherAltUrls('https://www.cnbctv18.com/india/foo-123.htm')[0], 'https://www.cnbctv18.com/amp/india/foo-123.htm')
 })
 
+test('Economic Times AMP is the m.economictimes.com articleshow page', () => {
+  const url = 'https://economictimes.indiatimes.com/magazines/panache/actor-madhavan-foo/articleshow/123.cms'
+  assert.deepEqual(publisherAltUrls(url), [
+    'https://m.economictimes.com/magazines/panache/actor-madhavan-foo/amp_articleshow/123.cms',
+  ])
+  assert.deepEqual(
+    publisherAltUrls('https://m.economictimes.com/magazines/panache/foo/amp_articleshow/123.cms'),
+    [],
+  )
+})
+
 test('amphtml link is read from the page, including relative hrefs', () => {
   const html = '<link rel="amphtml" href="/mumbai-news/foo-11954293/amp/1">'
   assert.equal(

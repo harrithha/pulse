@@ -23,10 +23,11 @@ export function publisherAltUrls(url: string): string[] {
       return []
     }
 
-    if (host === 'economictimes.indiatimes.com' || host.endsWith('.economictimes.indiatimes.com')) {
+    if (host === 'economictimes.indiatimes.com' || host.endsWith('.economictimes.indiatimes.com') || host === 'economictimes.com' || host.endsWith('.economictimes.com')) {
       if (/amp_articleshow/i.test(path)) return []
-      if (/\/articleshow\//i.test(path)) return [`${origin}${path.replace('/articleshow/', '/amp_articleshow/')}${u.search}`]
-      return []
+      if (!/\/articleshow\//i.test(path)) return []
+      const ampPath = `${path.replace('/articleshow/', '/amp_articleshow/')}`
+      return [`https://m.economictimes.com${ampPath}`]
     }
 
     if (host === 'livemint.com' || host.endsWith('.livemint.com')) {
