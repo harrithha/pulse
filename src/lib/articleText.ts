@@ -3,6 +3,8 @@ export function isJunkParagraph(text: string) {
   if (!t) return true
   if (/you can also check/i.test(t)) return true
   if (/^\s*also (check|read|see)\b/i.test(t)) return true
+  if (/^\(?\s*function\b/.test(t)) return true
+  if (/\bvdo\.ai\b|googletag|fbq\(|gtag\(/.test(t)) return true
   if ((t.match(/\|/g) || []).length >= 3) return true
   const widgets = (t.match(/\b(gold rate|silver rate|bank holidays?|public holidays?|petrol price|diesel price|cng price|lpg price|\baqi\b|weather in )\b/gi) || []).length
   if (widgets >= 2) return true

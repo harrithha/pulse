@@ -250,7 +250,7 @@ function htmlParagraphs(html: string): string[] {
     .flatMap(p => p.split(/\n{2,}/))
     .map(p => p.replace(/\s+/g, ' ').trim())
     .map(p => p.split(/you can also check\s*:?/i)[0].replace(/[|\s]+$/g, '').trim())
-    .filter(p => p.length > 55 && !isJunkParagraph(p) && !/cookie|subscribe|newsletter|advertisement|read more|sign in|download the app|click here|follow us|whatsapp|telegram/i.test(p))
+    .filter(p => p.length > 55 && !isJunkParagraph(p) && !/cookie|subscribe|newsletter|advertisement|read more|sign in|download the app|click here|follow us|whatsapp|telegram|^\(?\s*function\b|vdo\.ai/i.test(p))
   const uniq: string[] = []
   for (const p of blobs) {
     if (!uniq.some(u => u.slice(0, 80) === p.slice(0, 80))) uniq.push(p)
@@ -441,9 +441,14 @@ function publisherFallbacks(url: string) {
   try {
     const u = new URL(url)
     const host = u.hostname.replace(/^www\./, '')
+    const path = u.pathname.replace(/\/+$/, '')
     if (host === 'ndtv.com' || host.endsWith('.ndtv.com')) {
-      if (u.pathname.startsWith('/amp/')) return []
-      return [`${u.origin}/amp${u.pathname}${u.search}`]
+      if (/\/amp(?:\/|$)/i.test(path)) return []
+      return [`${u.origin}${path}/amp/1`]
+    }
+    if (host === 'indianexpress.com' || host.endsWith('.indianexpress.com')) {
+      if (u.searchParams.get('outputType') === 'amp') return []
+      return [`${u.origin}${path}?outputType=amp`]
     }
   } catch {
     /* ignore */
@@ -565,7 +570,7 @@ function extractParagraphs(html: string): string[] {
     .replace(/<noscript[\s\S]*?<\/noscript>/gi, ' ')
   const articleChunk =
     (cleaned.match(/<article\b[\s\S]*?<\/article>/i) || [])[0] ||
-    (cleaned.match(/<(?:div|section)[^>]*(?:story|article|editorial|content|artText|Normal|full-details|sp-cn|ins_storybody)[^>]*>[\s\S]*$/i) || [])[0] ||
+    (cleaned.match(/<(?:div|section)[^>]*itemprop=["']articleBody["'][^>]*>[\s\S]*?<\/(?:div|section)>/i) || [])[0] ||
     cleaned
   const paras = htmlParagraphs(articleChunk)
   const picked = paras.length >= 2 ? paras : fromLd.length ? fromLd : paras
@@ -583,37 +588,38 @@ function pageToArticle(html: string) {
 async function extractArticle(url: string) {
   const empty = { title: '', image: '', paragraphs: [] as string[] }
   const candidates = [...new Set([url, ...publisherFallbacks(url)])]
-  if (candidates.length === 1) {
-    const page = await fetchPage(candidates[0], 8000)
-    return page ? pageToArticle(page.html) : empty
-  }
-  return new Promise<ReturnType<typeof pageToArticle>>(resolve => {
+  let best = empty
+  await new Promise<void>(resolve => {
     let pending = candidates.length
-    let best = empty
-    let done = false
-    const finish = (article: ReturnType<typeof pageToArticle>) => {
-      if (done) return
-      done = true
-      resolve(article)
+    let settled = false
+    const finish = () => {
+      if (settled) return
+      settled = true
+      resolve()
     }
     for (const candidate of candidates) {
-      void fetchPage(candidate, 8000).then(page => {
-        if (done) return
-        pending -= 1
-        if (!page) {
-          if (pending === 0) finish(best)
-          return
-        }
-        const article = pageToArticle(page.html)
-        if (article.paragraphs.length >= 2) {
-          finish(article)
-          return
-        }
-        if (article.paragraphs.length > best.paragraphs.length) best = article
-        if (pending === 0) finish(best)
-      })
+      void fetchPage(candidate, 20000)
+        .then(page => {
+          if (settled) return
+          pending -= 1
+          if (page) {
+            const article = pageToArticle(page.html)
+            if (article.paragraphs.length >= 2) {
+              best = article
+              finish()
+              return
+            }
+            if (article.paragraphs.length > best.paragraphs.length) best = article
+          }
+          if (pending === 0) finish()
+        })
+        .catch(() => {
+          pending -= 1
+          if (pending === 0) finish()
+        })
     }
   })
+  return best
 }
 
 const articleCache = new Map<string, { at: number; body: string }>()
