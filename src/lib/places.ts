@@ -15,6 +15,44 @@ export const CITY_TO_STATE: Partial<Record<City, StateName>> = {
   Ahmedabad: 'Gujarat',
 }
 
+const CITY_COORDS: Record<City, { lat: number; lon: number }> = {
+  Pune: { lat: 18.5204, lon: 73.8567 },
+  Mumbai: { lat: 19.076, lon: 72.8777 },
+  Bengaluru: { lat: 12.9716, lon: 77.5946 },
+  Chennai: { lat: 13.0827, lon: 80.2707 },
+  Hyderabad: { lat: 17.385, lon: 78.4867 },
+  Delhi: { lat: 28.6139, lon: 77.209 },
+  Kolkata: { lat: 22.5726, lon: 88.3639 },
+  Ahmedabad: { lat: 23.0225, lon: 72.5714 },
+}
+
+const CITY_RADIUS_KM = 85
+
+function haversineKm(a: { lat: number; lon: number }, b: { lat: number; lon: number }) {
+  const toRad = (deg: number) => (deg * Math.PI) / 180
+  const dLat = toRad(b.lat - a.lat)
+  const dLon = toRad(b.lon - a.lon)
+  const lat1 = toRad(a.lat)
+  const lat2 = toRad(b.lat)
+  const h = Math.sin(dLat / 2) ** 2 + Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLon / 2) ** 2
+  return 2 * 6371 * Math.asin(Math.min(1, Math.sqrt(h)))
+}
+
+/** Instant city match from GPS — skips a network reverse-geocode. */
+export function matchHomePlaceFromCoords(lat: number, lon: number): HomePlace {
+  let best: City | undefined
+  let bestKm = Infinity
+  for (const city of CITIES) {
+    const km = haversineKm({ lat, lon }, CITY_COORDS[city])
+    if (km < bestKm) {
+      bestKm = km
+      best = city
+    }
+  }
+  if (!best || bestKm > CITY_RADIUS_KM) return {}
+  return { city: best, state: CITY_TO_STATE[best] }
+}
+
 const CITY_HINTS: Array<[RegExp, City]> = [
   [/\b(pune|poona|pimpri|chinchwad|pcmc|hadapsar|hinjewadi|wagholi|kharadi|wakad|baner|aundh)\b/i, 'Pune'],
   [/\b(mumbai|bombay|navi mumbai|thane|kalyan|powai|bandra|andheri|worli|dadar|vashi)\b/i, 'Mumbai'],

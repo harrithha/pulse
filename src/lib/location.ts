@@ -1,6 +1,7 @@
-import { matchHomePlace, type HomePlace, type RawPlace } from './places'
+import { matchHomePlace, matchHomePlaceFromCoords, type HomePlace, type RawPlace } from './places'
 
-const TIMEOUT_MS = 12_000
+const GPS_TIMEOUT_MS = 8_000
+const GEOCODE_TIMEOUT_MS = 3_000
 
 async function fetchJson(url: string, signal: AbortSignal) {
   const res = await fetch(url, { signal })
@@ -12,27 +13,59 @@ function asString(value: unknown) {
   return typeof value === 'string' ? value : ''
 }
 
-function gpsCoords(timeout: number) {
-  return new Promise<{ lat: number; lon: number } | null>(resolve => {
+function gpsCoords(): Promise<{ lat: number; lon: number } | null> {
+  return new Promise(resolve => {
     if (!navigator.geolocation) {
       resolve(null)
       return
     }
-    navigator.geolocation.getCurrentPosition(
-      pos => resolve({ lat: pos.coords.latitude, lon: pos.coords.longitude }),
-      () => resolve(null),
-      { enableHighAccuracy: false, timeout, maximumAge: 15 * 60 * 1000 },
-    )
+    let settled = false
+    let watchId: number | undefined
+    const finish = (coords: { lat: number; lon: number } | null) => {
+      if (settled) return
+      settled = true
+      if (watchId != null) navigator.geolocation.clearWatch(watchId)
+      resolve(coords)
+    }
+
+    const onOk = (pos: GeolocationPosition) => {
+      finish({ lat: pos.coords.latitude, lon: pos.coords.longitude })
+    }
+
+    // Cached / coarse fix — often ready the moment permission is granted.
+    navigator.geolocation.getCurrentPosition(onOk, () => {}, {
+      enableHighAccuracy: false,
+      timeout: 1_200,
+      maximumAge: Infinity,
+    })
+
+    try {
+      watchId = navigator.geolocation.watchPosition(
+        onOk,
+        err => {
+          if (err.code === err.PERMISSION_DENIED) finish(null)
+        },
+        { enableHighAccuracy: false, timeout: GPS_TIMEOUT_MS, maximumAge: 60_000 },
+      )
+    } catch {
+      navigator.geolocation.getCurrentPosition(onOk, () => finish(null), {
+        enableHighAccuracy: false,
+        timeout: GPS_TIMEOUT_MS,
+        maximumAge: 60_000,
+      })
+    }
+
+    window.setTimeout(() => finish(null), GPS_TIMEOUT_MS)
   })
 }
 
-async function fromGps(signal: AbortSignal): Promise<RawPlace | null> {
-  const coords = await gpsCoords(TIMEOUT_MS)
-  if (!coords || signal.aborted) return null
+async function reverseGeocode(lat: number, lon: number): Promise<RawPlace | null> {
+  const ctrl = new AbortController()
+  const timer = window.setTimeout(() => ctrl.abort(), GEOCODE_TIMEOUT_MS)
   try {
     const data = await fetchJson(
-      `https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=${coords.lat}&longitude=${coords.lon}&localityLanguage=en`,
-      signal,
+      `https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=${lat}&longitude=${lon}&localityLanguage=en`,
+      ctrl.signal,
     )
     return {
       city: asString(data.city),
@@ -42,18 +75,20 @@ async function fromGps(signal: AbortSignal): Promise<RawPlace | null> {
     }
   } catch {
     return null
-  }
-}
-
-/** Only runs after the user taps Allow. Never infers city from IP. */
-export async function detectHomePlace(): Promise<HomePlace | null> {
-  const ctrl = new AbortController()
-  const timer = window.setTimeout(() => ctrl.abort(), TIMEOUT_MS + 1500)
-  try {
-    const gps = matchHomePlace(await fromGps(ctrl.signal))
-    if (gps.city || gps.state) return gps
-    return null
   } finally {
     window.clearTimeout(timer)
   }
+}
+
+/** Browser GPS only. Never infers city from IP. */
+export async function detectHomePlace(): Promise<HomePlace | null> {
+  const coords = await gpsCoords()
+  if (!coords) return null
+
+  const nearby = matchHomePlaceFromCoords(coords.lat, coords.lon)
+  if (nearby.city || nearby.state) return nearby
+
+  const named = matchHomePlace(await reverseGeocode(coords.lat, coords.lon))
+  if (named.city || named.state) return named
+  return null
 }
