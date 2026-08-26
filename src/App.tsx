@@ -829,12 +829,12 @@ function HomePage({
               boxShadow: 'var(--shadow)',
             }}
           >
-            <div className="text-[11px] tracking-[0.2em] uppercase mb-1.5 font-semibold" style={{ color: 'var(--amber)' }}>
+            <div className="text-[11px] tracking-[0.2em] uppercase mb-1.5 font-semibold text-center sm:text-left" style={{ color: 'var(--amber)' }}>
               {todayLabel()}
             </div>
-            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 sm:gap-6">
-              <h1 className="font-serif text-[24px] sm:text-[30px] md:text-[34px] leading-[1.08] text-[color:var(--ink)]">Today’s Pulse</h1>
-              <div className="flex flex-wrap items-center gap-2.5 shrink-0">
+            <div className="flex flex-col items-center sm:flex-row sm:items-center sm:justify-between gap-3 sm:gap-6">
+              <h1 className="font-serif text-[24px] sm:text-[30px] md:text-[34px] leading-[1.08] text-center sm:text-left text-[color:var(--ink)]">Today’s Pulse</h1>
+              <div className="flex flex-wrap items-center justify-center sm:justify-start gap-2.5 shrink-0">
                 <button
                   onClick={toggleAudio}
                   disabled={!edition.brief.sections.length}
@@ -846,13 +846,13 @@ function HomePage({
                 </button>
               </div>
             </div>
-            <p className="text-sm mt-2" style={{ color: 'var(--muted)' }}>
+            <p className="text-sm mt-2 text-center sm:text-left" style={{ color: 'var(--muted)' }}>
               {loading && !rows.length
                 ? 'Loading India and World news…'
                 : `${edition.brief.storyCount || 0} stories · ${edition.brief.minutes || 2} min listen.`}
             </p>
             {error && (
-              <div className="rounded-xl p-3 mt-3 text-sm" style={{ background: 'var(--error-bg)', color: 'var(--error-text)' }}>
+              <div className="rounded-xl p-3 mt-3 text-sm text-center sm:text-left" style={{ background: 'var(--error-bg)', color: 'var(--error-text)' }}>
                 {error}
                 <button onClick={onRetry} className="ml-3" style={{ color: 'var(--amber)' }}>Try again</button>
               </div>
