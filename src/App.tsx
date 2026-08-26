@@ -2,7 +2,7 @@ import { useEffect, useId, useRef, useState, type ReactNode } from 'react'
 import { emptyEdition, getCachedStoryArticle, loadEdition, prefetchStoryArticle, readCachedEdition } from './lib/news'
 import { isFullArticle } from './lib/articleExtract'
 import { cleanArticleParagraphs } from './lib/articleText'
-import { detectHomePlace } from './lib/location'
+import { detectHomePlace, queryGeolocationPermission, subscribeGeolocationPermission } from './lib/location'
 import {
   BROADER,
   CITIES,
@@ -16,7 +16,7 @@ import {
   type HomePlace,
   type StateName,
 } from './lib/places'
-import { readPrefs, readSession, writePrefs, applyTheme, readTabLocationGranted, readTabLocationAsked, writeTabLocation, type ThemeName } from './lib/session'
+import { readPrefs, readSession, writePrefs, applyTheme, readTabLocationGranted, writeTabLocation, type ThemeName } from './lib/session'
 import { canSpeak, packScriptGroups, prefetchSpeech, speakSections, type SpeechHandle } from './lib/speech'
 import type { NewsPayload, Screen, Session, StoryCard, Tab } from './types'
 
@@ -1231,6 +1231,7 @@ export default function App() {
     setHome({})
     setSelLoc(new Set(['World', 'India']))
     writeTabLocation('denied')
+    setTabLocationOk(false)
   }
 
   const markTabLocationOk = () => {
@@ -1238,24 +1239,74 @@ export default function App() {
     setTabLocationOk(true)
   }
 
-  const runDetect = () => {
+  const detectGen = useRef(0)
+  const gpsRetries = useRef(0)
+  const runDetect = (fromRetry = false) => {
+    if (!fromRetry) gpsRetries.current = 0
+    const gen = ++detectGen.current
     setDetecting(true)
     void detectHomePlace()
-      .then(found => {
+      .then(async found => {
+        if (gen !== detectGen.current) return false
         if (found) {
+          gpsRetries.current = 0
           applyDetectedHome(found, true)
           markTabLocationOk()
-          return
+          return false
         }
-        applyWorldDefault()
+        const state = await queryGeolocationPermission()
+        if (gen !== detectGen.current) return false
+        if (state === 'granted' && gpsRetries.current < 2) {
+          gpsRetries.current += 1
+          window.setTimeout(() => {
+            if (detectGen.current !== gen) return
+            runDetectRef.current(true)
+          }, 500)
+          return true
+        }
+        if (state !== 'granted') applyWorldDefault()
+        return false
       })
-      .finally(() => setDetecting(false))
+      .then(retrying => {
+        if (gen === detectGen.current && !retrying) setDetecting(false)
+      })
   }
+  const runDetectRef = useRef(runDetect)
+  runDetectRef.current = runDetect
 
   useEffect(() => {
     if (!hydrated) return
-    if (readTabLocationAsked()) return
-    runDetect()
+    let cancelled = false
+
+    const detectIfAllowed = async () => {
+      const state = await queryGeolocationPermission()
+      if (cancelled) return
+      if (state === 'denied') {
+        applyWorldDefault()
+        return
+      }
+      runDetectRef.current()
+    }
+
+    void detectIfAllowed()
+    const unsub = subscribeGeolocationPermission(state => {
+      if (state === 'granted') runDetectRef.current()
+      if (state === 'denied') applyWorldDefault()
+    })
+    const onReturn = () => {
+      if (document.visibilityState && document.visibilityState !== 'visible') return
+      void queryGeolocationPermission().then(state => {
+        if (state === 'granted' && !readTabLocationGranted()) runDetectRef.current()
+      })
+    }
+    document.addEventListener('visibilitychange', onReturn)
+    window.addEventListener('focus', onReturn)
+    return () => {
+      cancelled = true
+      unsub()
+      document.removeEventListener('visibilitychange', onReturn)
+      window.removeEventListener('focus', onReturn)
+    }
   }, [hydrated])
 
   const toggleLoc = (loc: string) =>

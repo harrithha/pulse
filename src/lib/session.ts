@@ -65,14 +65,6 @@ export function readTabLocationGranted() {
   }
 }
 
-export function readTabLocationAsked() {
-  try {
-    return sessionStorage.getItem(LOC_TAB_KEY) === 'granted' || sessionStorage.getItem(LOC_TAB_KEY) === 'denied'
-  } catch {
-    return false
-  }
-}
-
 export function writeTabLocation(status: 'granted' | 'denied') {
   try {
     sessionStorage.setItem(LOC_TAB_KEY, status)

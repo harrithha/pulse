@@ -80,6 +80,40 @@ async function reverseGeocode(lat: number, lon: number): Promise<RawPlace | null
   }
 }
 
+export type GeoPermission = PermissionState | 'unknown'
+
+export async function queryGeolocationPermission(): Promise<GeoPermission> {
+  try {
+    if (!navigator.permissions?.query) return 'unknown'
+    const status = await navigator.permissions.query({ name: 'geolocation' })
+    return status.state
+  } catch {
+    return 'unknown'
+  }
+}
+
+export function subscribeGeolocationPermission(onChange: (state: PermissionState) => void) {
+  let status: PermissionStatus | undefined
+  let cancelled = false
+  const onEvent = () => {
+    if (status) onChange(status.state)
+  }
+  void (async () => {
+    try {
+      if (!navigator.permissions?.query) return
+      status = await navigator.permissions.query({ name: 'geolocation' })
+      if (cancelled) return
+      status.addEventListener('change', onEvent)
+    } catch {
+      /* Safari */
+    }
+  })()
+  return () => {
+    cancelled = true
+    status?.removeEventListener('change', onEvent)
+  }
+}
+
 /** Browser GPS only. Never infers city from IP. */
 export async function detectHomePlace(): Promise<HomePlace | null> {
   const coords = await gpsCoords()
