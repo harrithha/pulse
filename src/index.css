@@ -31,33 +31,37 @@
   --error-text: #e8b4ae;
   --body: #c8c2b8;
   --scroll: #2a2a40;
+  --card-border: rgba(255, 255, 255, 0.1);
+  --card-shadow: 0 10px 24px rgba(0, 0, 0, 0.22);
 }
 
 html[data-theme='light'] {
   color-scheme: light;
-  --paper: #f6f1ea;
-  --header: rgba(246, 241, 234, 0.9);
-  --surface: #ffffff;
-  --elevated: #efe9e1;
-  --input: #ffffff;
+  --paper: #e9e2d8;
+  --header: rgba(233, 226, 216, 0.92);
+  --surface: #fffcf8;
+  --elevated: #f3ebe2;
+  --input: #fffcf8;
   --ink: #1c1917;
-  --muted: #6f6860;
-  --dim: #8a837a;
-  --chip-text: #4a453f;
+  --muted: #6a635b;
+  --dim: #847c73;
+  --chip-text: #3f3a35;
   --amber: #c2410c;
   --amber-soft: rgba(194, 65, 12, 0.1);
   --amber-border: rgba(194, 65, 12, 0.32);
   --orange: #ea580c;
-  --border: rgba(28, 25, 23, 0.08);
-  --border-strong: rgba(28, 25, 23, 0.14);
-  --shadow: 0 14px 36px rgba(28, 25, 23, 0.08);
-  --hero: linear-gradient(145deg, #fffaf4 0%, #f7f1ea 48%, #f3ebe2 100%);
+  --border: rgba(28, 25, 23, 0.12);
+  --border-strong: rgba(28, 25, 23, 0.18);
+  --card-border: rgba(28, 25, 23, 0.14);
+  --card-shadow: 0 1px 2px rgba(28, 25, 23, 0.06), 0 10px 28px rgba(28, 25, 23, 0.1);
+  --shadow: 0 14px 36px rgba(28, 25, 23, 0.1);
+  --hero: linear-gradient(145deg, #fffaf4 0%, #f7f1ea 48%, #efe6da 100%);
   --poster-fallback: linear-gradient(160deg, #f3e4d4 0%, #efe9e1 58%, #e7dfd4 100%);
-  --poster-wash: linear-gradient(to top, rgba(246, 241, 234, 0.82), transparent 55%);
+  --poster-wash: linear-gradient(to top, rgba(233, 226, 216, 0.82), transparent 55%);
   --error-bg: rgba(185, 28, 28, 0.08);
   --error-text: #9f1239;
   --body: #3f3a35;
-  --scroll: #d6cfc4;
+  --scroll: #cfc6b8;
 }
 
 *, *::before, *::after {
@@ -112,13 +116,23 @@ button, a, input {
   overflow-x: auto;
   overflow-y: hidden;
   scroll-snap-type: x mandatory;
-  scroll-padding-inline: 20px;
+  scroll-padding-inline: 16px;
   -webkit-overflow-scrolling: touch;
   scrollbar-width: none;
-  padding: 4px 4px 16px;
+  padding: 6px 4px 20px;
 }
 .row-scroll::-webkit-scrollbar {
   display: none;
+}
+
+.news-card {
+  background: var(--surface);
+  border: 1px solid var(--card-border);
+  box-shadow: var(--card-shadow);
+}
+
+.shelf-row {
+  position: relative;
 }
 
 .nav-btn {
@@ -167,7 +181,7 @@ button, a, input {
 }
 .header-chip.is-location {
   color: var(--ink);
-  max-width: 42vw;
+  max-width: 34vw;
 }
 .header-icon {
   width: 36px;
@@ -199,9 +213,23 @@ button, a, input {
   }
 }
 
-@media (max-width: 767px) {
+@media (max-width: 639px) {
   .row-scroll {
-    gap: 10px;
+    gap: 12px;
     scroll-padding-inline: 16px;
+    padding: 6px 16px 22px;
+  }
+  .shelf-row::after {
+    content: '';
+    pointer-events: none;
+    position: absolute;
+    top: 34px;
+    right: 0;
+    bottom: 8px;
+    width: 36px;
+    background: linear-gradient(to right, transparent, var(--paper));
+  }
+  .header-chip.is-location {
+    max-width: 30vw;
   }
 }

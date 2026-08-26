@@ -270,7 +270,7 @@ function BrandMark({ size = 22 }: { size?: number }) {
   return (
     <span className="inline-flex items-center gap-2 min-w-0">
       <PulseMark size={size} />
-      <span className="text-[11px] md:text-[12px] font-semibold tracking-[0.32em] md:tracking-[0.38em] uppercase" style={{ color: 'var(--amber)' }}>
+      <span className="hidden min-[380px]:inline text-[11px] md:text-[12px] font-semibold tracking-[0.32em] md:tracking-[0.38em] uppercase" style={{ color: 'var(--amber)' }}>
         Pulse
       </span>
     </span>
@@ -466,13 +466,12 @@ function PosterCard({
       onFocus={onPrefetch}
       className={
         rail
-          ? 'shrink-0 w-[78vw] max-w-[260px] sm:w-[240px] sm:max-w-none md:w-[280px] text-left rounded-xl overflow-hidden snap-start group'
-          : 'w-full min-w-0 text-left rounded-xl overflow-hidden group'
+          ? 'news-card shrink-0 w-[84vw] sm:w-[240px] md:w-[272px] text-left rounded-2xl overflow-hidden snap-start group'
+          : 'news-card w-full min-w-0 text-left rounded-2xl overflow-hidden group'
       }
-      style={{ background: 'var(--surface)', border: '1px solid var(--border)' }}
     >
       <div
-        className={rail ? 'relative h-[140px] sm:h-[150px] md:h-[168px] overflow-hidden' : 'relative h-[150px] sm:h-[160px] overflow-hidden'}
+        className={rail ? 'relative h-[168px] sm:h-[150px] md:h-[168px] overflow-hidden' : 'relative h-[150px] sm:h-[160px] overflow-hidden'}
         style={{ background: 'var(--elevated)' }}
       >
         <CoverImage
@@ -481,9 +480,9 @@ function PosterCard({
         />
         <div className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity" style={{ background: 'var(--poster-wash)' }} />
       </div>
-      <div className="p-3.5">
+      <div className="p-3.5 sm:p-3.5">
         <div className="text-[11px] mb-1.5 truncate font-semibold" style={{ color: 'var(--amber)' }}>{sourceName(story)} · {story.time}</div>
-        <div className="text-[15px] font-medium leading-snug line-clamp-2" style={{ color: 'var(--ink)' }}>{story.headline}</div>
+        <div className="text-[15px] sm:text-[15px] font-medium leading-snug line-clamp-2" style={{ color: 'var(--ink)' }}>{story.headline}</div>
       </div>
     </button>
   )
@@ -509,16 +508,16 @@ function ShelfRow({ title, stories, onOpen }: { title: string; stories: StoryCar
   }
   if (!stories.length) return null
   return (
-    <section className="mb-6 sm:mb-7">
+    <section className="shelf-row mb-7 sm:mb-8">
       <div className="grid grid-cols-1 sm:grid-cols-[44px_minmax(0,1fr)_44px] lg:grid-cols-[52px_minmax(0,1fr)_52px] px-1 sm:px-2 md:px-3 mb-2 sm:mb-2.5">
         <div className="hidden sm:block" />
-        <h2 className="px-3 sm:px-1 text-[18px] sm:text-[20px] md:text-[22px] font-semibold tracking-tight" style={{ color: 'var(--ink)' }}>
+        <h2 className="px-4 sm:px-1 text-[20px] sm:text-[20px] md:text-[22px] font-semibold tracking-tight" style={{ color: 'var(--ink)' }}>
           {title}
         </h2>
       </div>
-      <div className="grid grid-cols-1 sm:grid-cols-[44px_minmax(0,1fr)_44px] lg:grid-cols-[52px_minmax(0,1fr)_52px] items-center px-1 sm:px-2 md:px-3">
+      <div className="grid grid-cols-1 sm:grid-cols-[44px_minmax(0,1fr)_44px] lg:grid-cols-[52px_minmax(0,1fr)_52px] items-center px-0 sm:px-2 md:px-3">
         <RowArrow dir="left" label={`Scroll ${title} left`} onClick={() => scrollBy(-1)} />
-        <div ref={scroller} className="row-scroll min-w-0 px-3 sm:px-1">
+        <div ref={scroller} className="row-scroll min-w-0 sm:px-1">
           {stories.map(story => (
             <PosterCard
               key={story.id}
