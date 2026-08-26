@@ -1,6 +1,7 @@
 import { useEffect, useId, useRef, useState, type ReactNode } from 'react'
 import { emptyEdition, getCachedStoryArticle, loadEdition, prefetchStoryArticle, readCachedEdition } from './lib/news'
 import { isArticleUrl, isFullArticle } from './lib/articleExtract'
+import { headlineDedupeKey, urlDedupeKey } from './lib/storyDedupe'
 import { cleanArticleParagraphs } from './lib/articleText'
 import { detectHomePlace, queryGeolocationPermission, subscribeGeolocationPermission } from './lib/location'
 import {
@@ -101,11 +102,37 @@ function prefetchStoryListen(story: StoryCard, paragraphs: string[] = []) {
   if (packed[1]) prefetchSpeech(packed[1])
 }
 
+function uniqueStoriesAcrossShelves(shelves: NewsPayload['shelves']) {
+  const cityFirst = [...shelves].sort((a, b) => {
+    const rank = (label: string) => (label.startsWith('My City') ? 0 : (STATES as readonly string[]).includes(label) ? 1 : 2)
+    return rank(a.label) - rank(b.label)
+  })
+  const seen = new Set<string>()
+  const kept = new Map<string, NewsPayload['shelves'][0]['stories']>()
+  for (const shelf of cityFirst) {
+    const stories = [...shelf.stories]
+      .sort((a, b) => Date.parse(b.publishedAt) - Date.parse(a.publishedAt))
+      .filter(story => {
+        const words = headlineDedupeKey(story.headline)
+        const path = urlDedupeKey(story.url)
+        if ((words && seen.has(words)) || (path && seen.has(path))) return false
+        if (words) seen.add(words)
+        if (path) seen.add(path)
+        return true
+      })
+    kept.set(shelf.label, stories)
+  }
+  return shelves
+    .map(shelf => ({ ...shelf, stories: kept.get(shelf.label) || [] }))
+    .filter(shelf => shelf.stories.length)
+}
+
 function orderedShelves(shelves: NewsPayload['shelves'], _home?: HomePlace, focus: string[] = []) {
+  const unique = uniqueStoriesAcrossShelves(shelves)
   const used = new Set<string>()
   const focused: NewsPayload['shelves'] = []
   for (const item of focus) {
-    const hit = shelves.find(shelf => {
+    const hit = unique.find(shelf => {
       if (used.has(shelf.label)) return false
       const title = shelfTitle(shelf.label)
       return title === item || shelf.label === item || shelf.label === `My City · ${item}`
@@ -115,7 +142,7 @@ function orderedShelves(shelves: NewsPayload['shelves'], _home?: HomePlace, focu
       used.add(hit.label)
     }
   }
-  return [...focused, ...shelves.filter(shelf => !used.has(shelf.label))]
+  return [...focused, ...unique.filter(shelf => !used.has(shelf.label))]
 }
 
 function NavChevron({ dir, size = 22 }: { dir: 'left' | 'right'; size?: number }) {
@@ -1230,7 +1257,7 @@ export default function App() {
       setLoading(true)
     }
     setError(null)
-    loadEdition(locs, topics, ctrl.signal, refreshNonce > 0)
+    loadEdition(locs, topics, ctrl.signal, true)
       .then(setEdition)
       .catch(err => {
         if ((err as Error).name === 'AbortError') return

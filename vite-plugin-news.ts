@@ -9,6 +9,7 @@ import {
   isGoogleNewsUrl,
   parseGoogleNewsBatchResponse,
 } from './src/lib/googleNews.js'
+import { headlineDedupeKey, urlDedupeKey } from './src/lib/storyDedupe.js'
 
 const UA =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'
@@ -139,19 +140,11 @@ function placeLabelFromShelf(shelf: string) {
   return shelf.replace(/^My City · /, '').trim()
 }
 
-function isStateShelf(label: string) {
-  return ['Maharashtra', 'Tamil Nadu', 'Karnataka', 'Telangana', 'Gujarat', 'Rajasthan'].includes(label)
-}
-
 function mentionsPlace(item: { headline: string; url: string }, place: string) {
   const words = PLACE_WORDS[place]
   if (!words?.length) return true
   const hay = `${item.headline} ${item.url}`.toLowerCase()
   return words.some(w => hay.includes(w))
-}
-
-function mentionsStateName(headline: string, state: string) {
-  return headline.toLowerCase().includes(state.toLowerCase())
 }
 
 const TOPIC_PUBLISHER_FEEDS: Record<string, Feed[]> = {
@@ -1140,8 +1133,13 @@ function feedsFor(locations: string[], topics: string[]) {
   }
   for (const state of states) {
     const hub = STATE_HUB[state]
-    if (hub && TOI_CITY[hub]) feeds.push({ shelf: state, url: TOI_CITY[hub], publisher: 'The Times of India' })
-    if (hub && IE_CITY[hub]) feeds.push({ shelf: state, url: IE_CITY[hub], publisher: 'The Indian Express' })
+    const followingHub = Boolean(hub && locSet.has(hub))
+    if (hub && TOI_CITY[hub] && !followingHub) {
+      feeds.push({ shelf: state, url: TOI_CITY[hub], publisher: 'The Times of India' })
+    }
+    if (hub && IE_CITY[hub] && !followingHub) {
+      feeds.push({ shelf: state, url: IE_CITY[hub], publisher: 'The Indian Express' })
+    }
     if (state === 'Maharashtra') {
       feeds.push({ shelf: state, url: 'https://feeds.feedburner.com/ndtvnews-cities-news', publisher: 'NDTV' })
     }
@@ -1216,24 +1214,17 @@ async function buildEdition(locations: string[], topics: string[]) {
     if (!raw?.length) continue
     const clustered = cluster(raw)
     const unique = clustered.filter(story => {
-      const key = tokens(story.headline).slice(0, 6).join(' ')
-      if (seen.has(key)) return false
-      seen.add(key)
+      const words = headlineDedupeKey(story.headline)
+      const path = urlDedupeKey(story.url)
+      if ((words && seen.has(words)) || (path && seen.has(path))) return false
+      if (words) seen.add(words)
+      if (path) seen.add(path)
       return true
     })
     const allowed = unique.filter(story =>
       story.publishers.some(p => isAllowedSource(p.name, p.url || story.url)) || isAllowedSource('', story.url),
     )
-    let stories = pickStories(allowed, 12)
-    if (isStateShelf(label) && stories.length < 8) {
-      const named = clustered.filter(
-        story =>
-          mentionsStateName(story.headline, label) &&
-          !stories.some(s => s.headline === story.headline) &&
-          (story.publishers.some(p => isAllowedSource(p.name, p.url || story.url)) || isAllowedSource('', story.url)),
-      )
-      stories = pickStories([...stories, ...named], 12)
-    }
+    const stories = pickStories(allowed, 12)
     if (stories.length) shelves.push({ label, stories })
   }
 
@@ -1245,6 +1236,7 @@ async function buildEdition(locations: string[], topics: string[]) {
         shelves[i].stories = keepArticleStories(shelves[i].stories)
         if (!shelves[i].stories.length) shelves.splice(i, 1)
       }
+      dedupeShelves(shelves)
       const imageless = shelves.flatMap(s => s.stories.filter(story => !story.image).slice(0, 12))
       await Promise.race([
         backfillFromPublisherRss(imageless),
@@ -1273,32 +1265,28 @@ function cityLikeLabel(l: string) {
 }
 
 function pickStories(stories: Story[], limit = 16) {
-  const pictured = stories.filter(s => s.image)
-  const rest = stories.filter(s => !s.image)
-  const roundRobin = (list: Story[], into: Story[]) => {
-    const groups = new Map<string, Story[]>()
-    for (const story of list) {
-      const key = story.publishers[0]?.name || story.id
-      const arr = groups.get(key) ?? []
-      arr.push(story)
-      groups.set(key, arr)
-    }
-    let added = true
-    while (into.length < limit && added) {
-      added = false
-      for (const arr of groups.values()) {
-        const next = arr.shift()
-        if (!next) continue
-        into.push(next)
-        added = true
-        if (into.length >= limit) break
-      }
-    }
+  return [...stories]
+    .sort((a, b) => Date.parse(b.publishedAt) - Date.parse(a.publishedAt) || (Number(Boolean(b.image)) - Number(Boolean(a.image))))
+    .slice(0, limit)
+}
+
+function dedupeShelves(shelves: Array<{ label: string; stories: Story[] }>) {
+  const seen = new Set<string>()
+  for (const shelf of shelves) {
+    shelf.stories = [...shelf.stories]
+      .sort((a, b) => Date.parse(b.publishedAt) - Date.parse(a.publishedAt))
+      .filter(story => {
+        const words = headlineDedupeKey(story.headline)
+        const path = urlDedupeKey(story.url)
+        if ((words && seen.has(words)) || (path && seen.has(path))) return false
+        if (words) seen.add(words)
+        if (path) seen.add(path)
+        return true
+      })
   }
-  const picked: Story[] = []
-  roundRobin(pictured, picked)
-  if (picked.length < limit) roundRobin(rest, picked)
-  return picked
+  for (let i = shelves.length - 1; i >= 0; i--) {
+    if (!shelves[i].stories.length) shelves.splice(i, 1)
+  }
 }
 
 export async function handleNews(req: IncomingMessage, res: ServerResponse) {
