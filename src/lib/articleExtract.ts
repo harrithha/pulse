@@ -1,5 +1,28 @@
 /** Publisher page variants we should try when the canonical URL is thin or slow. */
 
+export function isArticleUrl(url = '') {
+  if (!url || /news\.google\.com/i.test(url)) return false
+  try {
+    const u = new URL(url)
+    const host = u.hostname.replace(/^www\./, '')
+    const path = u.pathname.replace(/\/+$/, '') || '/'
+    const segs = path.split('/').filter(Boolean)
+    if (path === '/' || !segs.length) return false
+    if (/\/(rss|feed|feeds)(\/|$)/i.test(path)) return false
+    if (/^\/(latest|topic|topics|section|tag|tags|liveblog|videos|photos)(\/|$)/i.test(path)) return false
+    if (/timesofindia\.indiatimes|economictimes/i.test(host)) {
+      return /articleshow|amp_articleshow/i.test(path) || /\/\d{6,}(?:\/|$)/.test(path)
+    }
+    if (/indianexpress/i.test(host)) return /\/article\//i.test(path)
+    if (/ndtv/i.test(host)) return segs.length >= 2 && /\d{5,}/.test(path)
+    if (/livemint/i.test(host)) return /\.html?$/i.test(path) || /\d{10,}/.test(path)
+    if (/cnbctv18|cnbc\.com/i.test(host)) return segs.length >= 2 && (/\d{5,}/.test(path) || /\.html?$/i.test(path))
+    return segs.length >= 2 && (/\d{5,}/.test(path) || /\.html?$|\.cms$/i.test(path) || /\/article\//i.test(path))
+  } catch {
+    return false
+  }
+}
+
 export function publisherAltUrls(url: string): string[] {
   try {
     const u = new URL(url)

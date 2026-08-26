@@ -1,6 +1,33 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { ampHtmlHref, isFullArticle, publisherAltUrls, splitArticleBody } from '../src/lib/articleExtract.ts'
+import { ampHtmlHref, isArticleUrl, isFullArticle, publisherAltUrls, splitArticleBody } from '../src/lib/articleExtract.ts'
+
+test('isArticleUrl keeps one story page and drops homepages, sections, and Google News', () => {
+  assert.equal(
+    isArticleUrl(
+      'https://economictimes.indiatimes.com/markets/ipos/fpos/esds-to-expand-data-centre-operations-with-of-rs-720-cr-ipo-proceeds/articleshow/133526906.cms',
+    ),
+    true,
+  )
+  assert.equal(isArticleUrl('https://economictimes.indiatimes.com/markets/ipos/fpos'), false)
+  assert.equal(
+    isArticleUrl('https://education.economictimes.indiatimes.com/news/government-policies/tamil-nadu-to-recruit-6000/133506215'),
+    true,
+  )
+  assert.equal(isArticleUrl('https://www.ndtv.com/'), false)
+  assert.equal(
+    isArticleUrl('https://www.ndtv.com/mumbai-news/4-700-litres-milk-destroyed-in-mumbai-food-safety-crackdown-11954293'),
+    true,
+  )
+  assert.equal(
+    isArticleUrl('https://indianexpress.com/article/entertainment/bollywood/sobhita-dhulipala-naga-chaitanya-10849500/'),
+    true,
+  )
+  assert.equal(
+    isArticleUrl('https://news.google.com/rss/articles/CBMigwFBVV95cUxOVXVIMGpf?oc=5'),
+    false,
+  )
+})
 
 test('NDTV uses /amp/1, never the /amp + path 404', () => {
   const url = 'https://www.ndtv.com/mumbai-news/4-700-litres-milk-destroyed-in-mumbai-food-safety-crackdown-11954293'

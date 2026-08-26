@@ -1,5 +1,5 @@
 import type { NewsPayload } from '../types'
-import { isFullArticle } from './articleExtract'
+import { isArticleUrl, isFullArticle } from './articleExtract'
 import { cleanArticleParagraphs } from './articleText'
 
 type ArticleResult = { title?: string; image?: string; paragraphs: string[]; error?: string }
@@ -128,7 +128,7 @@ export async function loadArticle(url: string, signal?: AbortSignal) {
 
 async function fetchBestArticle(story: { url: string; publishers: { url: string }[] }): Promise<ArticleResult> {
   const google = /news\.google\.com/i
-  const urls = [...story.publishers.map(p => p.url), story.url].filter(Boolean)
+  const urls = [...story.publishers.map(p => p.url), story.url].filter(u => u && isArticleUrl(u))
   const unique = [...new Set(urls)]
   const ordered = [...unique.filter(u => !google.test(u)), ...unique.filter(u => google.test(u))].slice(0, 3)
   if (!ordered.length) return { paragraphs: [] }

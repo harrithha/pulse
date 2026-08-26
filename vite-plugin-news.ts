@@ -1,7 +1,7 @@
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { Plugin, PreviewServer, ViteDevServer } from 'vite'
 import { handleTts, type TtsOptions } from './pulse-tts.js'
-import { ampHtmlHref, isFullArticle, publisherAltUrls, splitArticleBody } from './src/lib/articleExtract.js'
+import { ampHtmlHref, isArticleUrl, isFullArticle, publisherAltUrls, splitArticleBody } from './src/lib/articleExtract.js'
 import { cleanArticleParagraphs, isJunkParagraph } from './src/lib/articleText.js'
 import {
   googleNewsArticleId,
@@ -116,6 +116,42 @@ const STATE_HUB: Record<string, string> = {
   Karnataka: 'Bengaluru',
   Telangana: 'Hyderabad',
   Gujarat: 'Ahmedabad',
+}
+
+const PLACE_WORDS: Record<string, string[]> = {
+  Pune: ['pune', 'pimpri', 'chinchwad', 'hadapsar'],
+  Mumbai: ['mumbai', 'bombay', 'thane', 'navi mumbai', 'bandra', 'andheri'],
+  Delhi: ['delhi', 'noida', 'gurgaon', 'gurugram', 'ncr'],
+  Bengaluru: ['bengaluru', 'bangalore'],
+  Chennai: ['chennai', 'madras'],
+  Hyderabad: ['hyderabad', 'secunderabad'],
+  Kolkata: ['kolkata', 'calcutta'],
+  Ahmedabad: ['ahmedabad'],
+  Maharashtra: ['maharashtra', 'mumbai', 'pune', 'nagpur', 'nashik', 'thane', 'aurangabad', 'kolhapur', 'solapur', 'navi mumbai', 'amravati'],
+  'Tamil Nadu': ['tamil nadu', 'chennai', 'coimbatore', 'madurai', 'tiruchirappalli', 'trichy', 'salem', 'erode', 'vellore', 'tirunelveli', 'thoothukudi', 'kanchipuram', 'hosur'],
+  Karnataka: ['karnataka', 'bengaluru', 'bangalore', 'mysuru', 'mysore', 'mangaluru', 'hubballi'],
+  Telangana: ['telangana', 'hyderabad', 'warangal', 'secunderabad'],
+  Gujarat: ['gujarat', 'ahmedabad', 'surat', 'vadodara', 'rajkot'],
+  Rajasthan: ['rajasthan', 'jaipur', 'jodhpur', 'udaipur'],
+}
+
+function placeLabelFromShelf(shelf: string) {
+  return shelf.replace(/^My City · /, '').trim()
+}
+
+function isStateShelf(label: string) {
+  return ['Maharashtra', 'Tamil Nadu', 'Karnataka', 'Telangana', 'Gujarat', 'Rajasthan'].includes(label)
+}
+
+function mentionsPlace(item: { headline: string; url: string }, place: string) {
+  const words = PLACE_WORDS[place]
+  if (!words?.length) return true
+  const hay = `${item.headline} ${item.url}`.toLowerCase()
+  return words.some(w => hay.includes(w))
+}
+
+function mentionsStateName(headline: string, state: string) {
+  return headline.toLowerCase().includes(state.toLowerCase())
 }
 
 const TOPIC_PUBLISHER_FEEDS: Record<string, Feed[]> = {
@@ -574,11 +610,33 @@ async function resolveArticleUrl(url: string) {
 }
 
 function applyResolvedUrl(story: Story, resolved: string) {
-  if (!resolved || isGoogleNewsUrl(resolved) || !allowedHost(resolved)) return
-  if (isGoogleNewsUrl(story.url)) story.url = resolved
+  if (!resolved || !isArticleUrl(resolved) || !allowedHost(resolved)) return
+  if (isGoogleNewsUrl(story.url) || !isArticleUrl(story.url)) story.url = resolved
   for (const publisher of story.publishers) {
-    if (isGoogleNewsUrl(publisher.url)) publisher.url = resolved
+    if (isGoogleNewsUrl(publisher.url) || !isArticleUrl(publisher.url)) publisher.url = resolved
   }
+}
+
+async function resolveEditionLinks(stories: Story[]) {
+  const need = stories.filter(
+    story => isGoogleNewsUrl(story.url) || story.publishers.some(p => isGoogleNewsUrl(p.url)),
+  )
+  await mapLimit(need, 2, async story => {
+    const raw =
+      story.publishers.find(p => p.url && isGoogleNewsUrl(p.url))?.url ||
+      (isGoogleNewsUrl(story.url) ? story.url : '')
+    if (!raw) return
+    const resolved = await resolveArticleUrl(raw)
+    applyResolvedUrl(story, resolved)
+  })
+}
+
+function keepArticleStories(stories: Story[]) {
+  return stories.filter(story => {
+    const pub = story.publishers.find(p => isArticleUrl(p.url))
+    if (pub && !isArticleUrl(story.url)) story.url = pub.url
+    return isArticleUrl(story.url)
+  })
 }
 
 async function ogImage(url: string) {
@@ -659,7 +717,7 @@ async function backfillFromPublisherRss(stories: Story[]) {
     }
     if (!best) continue
     if (best.image) story.image = best.image
-    if (bestSame && best.url && !isGoogleNewsUrl(best.url)) {
+    if (bestSame && best.url && isArticleUrl(best.url) && bestScore >= 0.5) {
       story.url = best.url
       if (story.publishers[0]) story.publishers[0].url = best.url
     }
@@ -824,9 +882,9 @@ async function loadArticleBody(raw: string) {
   const pending = articleInflight.get(raw)
   if (pending) return pending
   const work = (async () => {
-    const target = /news\.google\.com/i.test(raw) ? await resolveArticleUrl(raw) : raw
-    if (!target || !allowedHost(target)) {
-      return JSON.stringify({ error: 'That publisher is not available for in-app reading.', paragraphs: [] })
+    const target = isGoogleNewsUrl(raw) ? await resolveArticleUrl(raw) : raw
+    if (!isArticleUrl(target) || !allowedHost(target)) {
+      return JSON.stringify({ error: 'That link is not a single publisher article.', paragraphs: [] })
     }
     const ready = cachedArticle(target)
     if (ready) {
@@ -1119,14 +1177,17 @@ async function buildEdition(locations: string[], topics: string[]) {
       const xml = await fetchText(feed.url)
       if (!xml) return [] as RawItem[]
       const parsed = parseRss(xml, feed.shelf, feed.publisher)
+      const place = placeLabelFromShelf(feed.shelf)
+      const googlePlaceFeed = !feed.publisher && PLACE_WORDS[place]
+      const local = googlePlaceFeed ? parsed.filter(item => mentionsPlace(item, place)) : parsed
       if (feed.shelf === 'Maharashtra' && feed.publisher === 'NDTV') {
-        return parsed.filter(item =>
+        return local.filter(item =>
           /\b(mumbai|pune|thane|nagpur|nashik|maharashtra|amravati|kolhapur|aurangabad|navi mumbai|chakan|wagholi)\b/i.test(
             `${item.headline} ${item.url}`,
           ),
         )
       }
-      return parsed
+      return local
     }),
   )
 
@@ -1154,25 +1215,36 @@ async function buildEdition(locations: string[], topics: string[]) {
     const raw = byShelf.get(label)
     if (!raw?.length) continue
     const clustered = cluster(raw)
-      .filter(story => {
-        const key = tokens(story.headline).slice(0, 6).join(' ')
-        if (seen.has(key)) return false
-        seen.add(key)
-        return true
-      })
-    const allowed = clustered.filter(story =>
+    const unique = clustered.filter(story => {
+      const key = tokens(story.headline).slice(0, 6).join(' ')
+      if (seen.has(key)) return false
+      seen.add(key)
+      return true
+    })
+    const allowed = unique.filter(story =>
       story.publishers.some(p => isAllowedSource(p.name, p.url || story.url)) || isAllowedSource('', story.url),
     )
-    const stories = pickStories(allowed, 12)
+    let stories = pickStories(allowed, 12)
+    if (isStateShelf(label) && stories.length < 8) {
+      const named = clustered.filter(
+        story =>
+          mentionsStateName(story.headline, label) &&
+          !stories.some(s => s.headline === story.headline) &&
+          (story.publishers.some(p => isAllowedSource(p.name, p.url || story.url)) || isAllowedSource('', story.url)),
+      )
+      stories = pickStories([...stories, ...named], 12)
+    }
     if (stories.length) shelves.push({ label, stories })
   }
 
-  const highlights = [...shelves.flatMap(s => s.stories)]
-    .sort((a, b) => b.sources - a.sources || Date.parse(b.publishedAt) - Date.parse(a.publishedAt))
-    .slice(0, 6)
-
   await Promise.race([
     (async () => {
+      const shown = shelves.flatMap(s => s.stories)
+      await resolveEditionLinks(shown)
+      for (let i = shelves.length - 1; i >= 0; i--) {
+        shelves[i].stories = keepArticleStories(shelves[i].stories)
+        if (!shelves[i].stories.length) shelves.splice(i, 1)
+      }
       const imageless = shelves.flatMap(s => s.stories.filter(story => !story.image).slice(0, 12))
       await Promise.race([
         backfillFromPublisherRss(imageless),
@@ -1180,8 +1252,12 @@ async function buildEdition(locations: string[], topics: string[]) {
       ])
       await fillImages(imageless)
     })(),
-    new Promise<void>(resolve => setTimeout(resolve, 22000)),
+    new Promise<void>(resolve => setTimeout(resolve, 28000)),
   ])
+
+  const highlights = [...shelves.flatMap(s => s.stories)]
+    .sort((a, b) => b.sources - a.sources || Date.parse(b.publishedAt) - Date.parse(a.publishedAt))
+    .slice(0, 6)
 
   const brief = buildBrief(shelves)
   return {

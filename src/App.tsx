@@ -1,6 +1,6 @@
 import { useEffect, useId, useRef, useState, type ReactNode } from 'react'
 import { emptyEdition, getCachedStoryArticle, loadEdition, prefetchStoryArticle, readCachedEdition } from './lib/news'
-import { isFullArticle } from './lib/articleExtract'
+import { isArticleUrl, isFullArticle } from './lib/articleExtract'
 import { cleanArticleParagraphs } from './lib/articleText'
 import { detectHomePlace, queryGeolocationPermission, subscribeGeolocationPermission } from './lib/location'
 import {
@@ -68,20 +68,21 @@ function sourceName(story: StoryCard) {
 
 function sourceLinks(story: StoryCard) {
   const seen = new Set<string>()
-  const links = story.publishers.filter(p => p.url && p.url !== '#')
+  const links = story.publishers.filter(p => p.url && p.url !== '#' && isArticleUrl(p.url))
   const out = links.filter(p => {
     if (seen.has(p.url)) return false
     seen.add(p.url)
     return true
   })
-  if (!out.length && story.url) out.push({ name: story.category || 'Source', url: story.url })
+  if (!out.length && story.url && isArticleUrl(story.url)) {
+    out.push({ name: story.category || 'Source', url: story.url })
+  }
   return out
 }
 
 function primaryReadUrl(story: StoryCard) {
-  const google = /news\.google\.com/i
   const links = sourceLinks(story)
-  return links.find(l => !google.test(l.url))?.url || links[0]?.url || story.url
+  return links[0]?.url || (isArticleUrl(story.url) ? story.url : '')
 }
 
 function storyListenScripts(story: StoryCard, paragraphs: string[]) {
