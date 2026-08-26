@@ -466,7 +466,7 @@ function PosterCard({
       onFocus={onPrefetch}
       className={
         rail
-          ? 'news-card shrink-0 w-[72vw] sm:w-[240px] md:w-[272px] text-left rounded-2xl overflow-hidden snap-start group'
+          ? 'news-card shrink-0 w-[86%] sm:w-[240px] md:w-[272px] text-left rounded-2xl overflow-hidden snap-start group'
           : 'news-card w-full min-w-0 text-left rounded-2xl overflow-hidden group'
       }
     >
@@ -491,8 +491,9 @@ function PosterCard({
 function RowArrow({ dir, label, onClick }: { dir: 'left' | 'right'; label: string; onClick: () => void }) {
   return (
     <button
+      type="button"
       onClick={onClick}
-      className="nav-btn hidden sm:flex w-10 h-10 lg:w-11 lg:h-11 justify-self-center"
+      className="nav-btn flex w-9 h-9 sm:w-10 sm:h-10 lg:w-11 lg:h-11 justify-self-center"
       style={{ background: 'var(--elevated)', color: 'var(--ink)', border: '1px solid var(--border-strong)' }}
       aria-label={label}
     >
@@ -506,34 +507,21 @@ function ShelfRow({ title, stories, onOpen }: { title: string; stories: StoryCar
   const scrollBy = (dir: number) => {
     const el = scroller.current
     if (!el) return
-    el.scrollBy({ left: dir * Math.min(el.clientWidth * 0.78, 720), behavior: 'smooth' })
+    el.scrollBy({ left: dir * Math.min(el.clientWidth * 0.86, 720), behavior: 'smooth' })
   }
   if (!stories.length) return null
   return (
     <section className="mb-7 sm:mb-8">
-      <div className="grid grid-cols-1 sm:grid-cols-[44px_minmax(0,1fr)_44px] lg:grid-cols-[52px_minmax(0,1fr)_52px] px-1 sm:px-2 md:px-3 mb-2 sm:mb-2.5">
-        <div className="hidden sm:block" />
-        <div className="px-4 sm:px-1 flex items-center justify-between gap-3">
-          <h2 className="text-[20px] sm:text-[20px] md:text-[22px] font-semibold tracking-tight" style={{ color: 'var(--ink)' }}>
-            {title}
-          </h2>
-          {stories.length > 1 && (
-            <button
-              type="button"
-              onClick={() => scrollBy(1)}
-              className="sm:hidden inline-flex items-center gap-0.5 text-[13px] font-semibold min-h-9 shrink-0"
-              style={{ color: 'var(--amber)' }}
-              aria-label={`More ${title} stories`}
-            >
-              More
-              <NavChevron dir="right" size={16} />
-            </button>
-          )}
-        </div>
+      <div className="grid grid-cols-[40px_minmax(0,1fr)_40px] sm:grid-cols-[44px_minmax(0,1fr)_44px] lg:grid-cols-[52px_minmax(0,1fr)_52px] px-1 sm:px-2 md:px-3 mb-2 sm:mb-2.5 items-center">
+        <div />
+        <h2 className="px-1 text-[20px] md:text-[22px] font-semibold tracking-tight" style={{ color: 'var(--ink)' }}>
+          {title}
+        </h2>
+        <div />
       </div>
-      <div className="grid grid-cols-1 sm:grid-cols-[44px_minmax(0,1fr)_44px] lg:grid-cols-[52px_minmax(0,1fr)_52px] items-center px-0 sm:px-2 md:px-3">
+      <div className="grid grid-cols-[40px_minmax(0,1fr)_40px] sm:grid-cols-[44px_minmax(0,1fr)_44px] lg:grid-cols-[52px_minmax(0,1fr)_52px] items-center px-1 sm:px-2 md:px-3">
         <RowArrow dir="left" label={`Scroll ${title} left`} onClick={() => scrollBy(-1)} />
-        <div ref={scroller} className="row-scroll min-w-0 sm:px-1">
+        <div ref={scroller} className="row-scroll min-w-0">
           {stories.map(story => (
             <PosterCard
               key={story.id}
