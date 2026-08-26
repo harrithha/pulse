@@ -72,3 +72,24 @@ export function writeTabLocation(status: 'granted' | 'denied') {
     /* private mode */
   }
 }
+
+const FOCUS_KEY = 'pulse-focus-shelves'
+
+export function readFocusShelves() {
+  try {
+    const raw = sessionStorage.getItem(FOCUS_KEY)
+    if (!raw) return [] as string[]
+    const parsed = JSON.parse(raw) as unknown
+    return Array.isArray(parsed) ? parsed.filter(x => typeof x === 'string') : []
+  } catch {
+    return [] as string[]
+  }
+}
+
+export function writeFocusShelves(items: string[]) {
+  try {
+    sessionStorage.setItem(FOCUS_KEY, JSON.stringify(items.slice(0, 12)))
+  } catch {
+    /* private mode */
+  }
+}

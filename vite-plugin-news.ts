@@ -478,7 +478,7 @@ async function ogImage(url: string) {
 }
 
 async function fillImages(stories: Story[]) {
-  const missing = stories.filter(story => !story.image).slice(0, 24)
+  const missing = stories.filter(story => !story.image)
   await Promise.all(
     missing.map(async story => {
       const url =
@@ -994,8 +994,8 @@ async function buildEdition(locations: string[], topics: string[]) {
     .slice(0, 6)
 
   await Promise.race([
-    fillImages(shelves.flatMap(s => s.stories).slice(0, 24)),
-    new Promise<void>(resolve => setTimeout(resolve, 4000)),
+    fillImages(shelves.flatMap(s => s.stories.filter(story => !story.image).slice(0, 6))),
+    new Promise<void>(resolve => setTimeout(resolve, 4500)),
   ])
 
   const brief = buildBrief(shelves)

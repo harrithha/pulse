@@ -13,7 +13,7 @@ import {
   mergeHomeLocations,
   type HomePlace,
 } from './lib/places'
-import { readPrefs, readSession, writePrefs, applyTheme, readTabLocationGranted, writeTabLocation, type ThemeName } from './lib/session'
+import { readPrefs, readSession, writePrefs, applyTheme, readTabLocationGranted, writeTabLocation, readFocusShelves, writeFocusShelves, type ThemeName } from './lib/session'
 import { canSpeak, packScriptGroups, prefetchSpeech, speakSections, type SpeechHandle } from './lib/speech'
 import type { NewsPayload, Screen, Session, StoryCard, Tab } from './types'
 
@@ -100,9 +100,7 @@ function prefetchStoryListen(story: StoryCard, paragraphs: string[] = []) {
   if (packed[1]) prefetchSpeech(packed[1])
 }
 
-function orderedShelves(shelves: NewsPayload['shelves'], home?: HomePlace, focus: string[] = []) {
-  const citySet = new Set<string>(CITIES)
-  const stateSet = new Set<string>(STATES)
+function orderedShelves(shelves: NewsPayload['shelves'], _home?: HomePlace, focus: string[] = []) {
   const used = new Set<string>()
   const focused: NewsPayload['shelves'] = []
   for (const item of focus) {
@@ -116,21 +114,7 @@ function orderedShelves(shelves: NewsPayload['shelves'], home?: HomePlace, focus
       used.add(hit.label)
     }
   }
-  const homeCity: NewsPayload['shelves'] = []
-  const cities: NewsPayload['shelves'] = []
-  const homeState: NewsPayload['shelves'] = []
-  const states: NewsPayload['shelves'] = []
-  const topics: NewsPayload['shelves'] = []
-  for (const shelf of shelves) {
-    if (used.has(shelf.label)) continue
-    const title = shelfTitle(shelf.label)
-    if (home?.city && title === home.city) homeCity.push(shelf)
-    else if (citySet.has(title)) cities.push(shelf)
-    else if (home?.state && title === home.state) homeState.push(shelf)
-    else if (stateSet.has(title)) states.push(shelf)
-    else topics.push(shelf)
-  }
-  return [...focused, ...homeCity, ...cities, ...homeState, ...states, ...topics]
+  return [...focused, ...shelves.filter(shelf => !used.has(shelf.label))]
 }
 
 function NavChevron({ dir, size = 22 }: { dir: 'left' | 'right'; size?: number }) {
@@ -416,6 +400,18 @@ function SiteHeader({
   return (
     <header className="sticky top-0 z-50 pulse-header">
       <div className="px-3 sm:px-5 md:px-10 h-14 md:h-16 flex items-center gap-2 sm:gap-3">
+        {editing ? (
+          <button
+            type="button"
+            onClick={() => onNavigate('home')}
+            className="flex items-center gap-1 shrink-0 text-sm font-semibold min-h-10 pr-1"
+            style={{ color: 'var(--ink)' }}
+            aria-label="Back"
+          >
+            <ChevronLeft />
+            Back
+          </button>
+        ) : null}
         <button onClick={() => onNavigate('home')} className="shrink-0">
           <BrandMark size={24} />
         </button>
@@ -1022,6 +1018,7 @@ function ProfilePage({
   onToggleLoc,
   onToggleTopic,
   onDetect,
+  onBack,
   onNext,
 }: {
   locations: string[]
@@ -1032,6 +1029,7 @@ function ProfilePage({
   onToggleLoc: (s: string) => void
   onToggleTopic: (s: string) => void
   onDetect: () => void
+  onBack: () => void
   onNext: () => void
 }) {
   const locSet = new Set(locations)
@@ -1039,6 +1037,15 @@ function ProfilePage({
   const found = homePlaceLabel(home)
   return (
     <div className="max-w-[760px] mx-auto px-4 sm:px-6 lg:px-8 py-8 sm:py-10 pb-10">
+      <button
+        type="button"
+        onClick={onBack}
+        className="flex items-center gap-1 text-sm mb-6 min-h-10"
+        style={{ color: 'var(--dim)' }}
+      >
+        <ChevronLeft />
+        Back
+      </button>
       <h1 className="font-serif text-[color:var(--ink)] text-[32px] sm:text-[40px] mb-2">Edit topics</h1>
       <p className="text-sm mb-3" style={{ color: 'var(--muted)' }}>
         {detecting
@@ -1170,6 +1177,7 @@ export default function App() {
     }
     setSelLoc(mergeHomeLocations(locs, savedHome))
     if (prefs?.topics) setSelTopics(new Set(prefs.topics))
+    setFocusShelves(readFocusShelves())
     const cached = readCachedEdition([...mergeHomeLocations(locs, savedHome)], topics)
     if (cached?.shelves.length) setEdition(cached)
     setSession(existing ?? GUEST_SESSION)
@@ -1202,6 +1210,11 @@ export default function App() {
       homeState: tabLocationOk ? home.state : prev?.homeState,
     })
   }, [selLoc, selTopics, onboarded, home, theme, tabLocationOk, hydrated])
+
+  useEffect(() => {
+    if (!hydrated) return
+    writeFocusShelves(focusShelves)
+  }, [focusShelves, hydrated])
 
   useEffect(() => {
     if (!hydrated || !session || !onboarded) return
@@ -1421,6 +1434,7 @@ export default function App() {
           onToggleLoc={toggleLoc}
           onToggleTopic={toggleTopic}
           onDetect={() => runDetect()}
+          onBack={() => pushRoute('home')}
           onNext={() => {
             setRefreshNonce(n => n + 1)
             pushRoute('home')
