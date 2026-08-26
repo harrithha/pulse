@@ -103,7 +103,7 @@ const TOPIC_PUBLISHER_FEEDS: Record<string, Feed[]> = {
     { shelf: 'Business', url: 'https://indianexpress.com/section/business/feed/', publisher: 'The Indian Express' },
     { shelf: 'Business', url: 'https://www.livemint.com/rss/money', publisher: 'Mint' },
     { shelf: 'Business', url: 'https://economictimes.indiatimes.com/rssfeedstopstories.cms', publisher: 'The Economic Times' },
-    { shelf: 'Business', url: 'https://www.cnbctv18.com/commonfeeds/v1/eng/rss/latest.xml', publisher: 'CNBC' },
+    { shelf: 'Business', url: 'https://www.cnbctv18.com/commonfeeds/v1/cne/rss/latest.xml', publisher: 'CNBC' },
   ],
   Sports: [
     { shelf: 'Sports', url: 'https://timesofindia.indiatimes.com/rssfeeds/4719148.cms', publisher: 'The Times of India' },
@@ -125,7 +125,7 @@ const INDIA_FEEDS: Feed[] = [
   { shelf: 'India', url: 'https://feeds.feedburner.com/ndtvnews-india-news', publisher: 'NDTV' },
   { shelf: 'India', url: 'https://www.livemint.com/rss/news', publisher: 'Mint' },
   { shelf: 'India', url: 'https://economictimes.indiatimes.com/rssfeedsdefault.cms', publisher: 'The Economic Times' },
-  { shelf: 'India', url: 'https://www.cnbctv18.com/commonfeeds/v1/eng/rss/india.xml', publisher: 'CNBC' },
+  { shelf: 'India', url: 'https://www.cnbctv18.com/commonfeeds/v1/cne/rss/india.xml', publisher: 'CNBC' },
 ]
 
 const WORLD_FEEDS: Feed[] = [
@@ -133,7 +133,7 @@ const WORLD_FEEDS: Feed[] = [
   { shelf: 'World', url: 'https://feeds.feedburner.com/ndtvnews-world-news', publisher: 'NDTV' },
   { shelf: 'World', url: 'https://indianexpress.com/section/world/feed/', publisher: 'The Indian Express' },
   { shelf: 'World', url: 'https://www.livemint.com/rss/news', publisher: 'Mint' },
-  { shelf: 'World', url: 'https://www.cnbctv18.com/commonfeeds/v1/eng/rss/world.xml', publisher: 'CNBC' },
+  { shelf: 'World', url: 'https://www.cnbctv18.com/commonfeeds/v1/cne/rss/world.xml', publisher: 'CNBC' },
 ]
 
 type RawItem = {
@@ -223,19 +223,22 @@ function mediaUrl(block: string) {
   ]
   for (const pattern of patterns) {
     const match = html.match(pattern)
-    const src = match?.[1]
+    const src = match?.[1]?.replace(/&amp;/g, '&')
     if (src && /^https?:/i.test(src) && !/1x1|pixel|spacer|blank\.(gif|png)/i.test(src)) {
       return normalizeImage(src)
     }
+    if (src && src.startsWith('//')) return normalizeImage(`https:${src}`)
   }
 }
 
 function normalizeImage(url: string) {
-  const id = url.match(/msid-(\d+)/i)?.[1] || url.match(/\/photo\/(\d+)\.cms/i)?.[1]
-  if (id && /toiimg|timesofindia/i.test(url)) {
+  if (!url) return url
+  const src = url.startsWith('//') ? `https:${url}` : url
+  const id = src.match(/msid-(\d+)/i)?.[1] || src.match(/\/photo\/(\d+)\.cms/i)?.[1]
+  if (id && /toiimg|timesofindia/i.test(src)) {
     return `https://static.toiimg.com/thumb/msid-${id},width-800,resizemode-4/${id}.jpg`
   }
-  return url
+  return src
 }
 
 function articleUrl(block: string, fallback: string) {
@@ -270,7 +273,7 @@ function stripHtml(s: string) {
 }
 
 function splitHeadline(title: string, sourceName: string) {
-  const decoded = decode(title)
+  const decoded = decode(title).replace(/^(Opinion:\s*){2,}/i, 'Opinion: ')
   if (sourceName) {
     for (const sep of [` - ${sourceName}`, ` | ${sourceName}`]) {
       if (decoded.endsWith(sep)) return decoded.slice(0, -sep.length).trim()
@@ -462,20 +465,25 @@ async function resolveArticleUrl(url: string) {
 
 async function ogImage(url: string) {
   if (!url) return
-  const html = await fetchText(url, 1800, 'text/html')
+  const target = /news\.google\.com/i.test(url) ? await resolveArticleUrl(url) : url
+  if (!target || /news\.google\.com/i.test(target)) return
+  const html = await fetchText(target, 2500, 'text/html')
   if (!html) return
   const match =
     html.match(/<meta[^>]+property=["']og:image(?::secure_url)?["'][^>]*content=["']([^"']+)/i) ||
-    html.match(/<meta[^>]+content=["']([^"']+)["'][^>]*property=["']og:image(?::secure_url)?["']/i)
+    html.match(/<meta[^>]+content=["']([^"']+)["'][^>]*property=["']og:image(?::secure_url)?["']/i) ||
+    html.match(/<meta[^>]+name=["']twitter:image["'][^>]*content=["']([^"']+)/i)
   const src = match?.[1]?.replace(/&amp;/g, '&')
-  if (src && /^https?:/i.test(src)) return normalizeImage(src)
+  if (src && /^(https?:)?\/\//i.test(src)) return normalizeImage(src)
 }
 
 async function fillImages(stories: Story[]) {
-  const missing = stories.filter(story => !story.image).slice(0, 10)
+  const missing = stories.filter(story => !story.image).slice(0, 24)
   await Promise.all(
     missing.map(async story => {
-      const image = await ogImage(story.url)
+      const url =
+        story.publishers.find(p => p.url && !/news\.google\.com/i.test(p.url))?.url || story.url
+      const image = await ogImage(url)
       if (image) story.image = image
     }),
   )
@@ -491,8 +499,8 @@ function allowedHost(url: string) {
 }
 
 function metaContent(html: string, prop: string) {
-  const a = html.match(new RegExp(`<meta[^>]+property=["']${prop}["'][^>]*content=["']([^"']+)["']`, 'i'))
-  const b = html.match(new RegExp(`<meta[^>]+content=["']([^"']+)["'][^>]*property=["']${prop}["']`, 'i'))
+  const a = html.match(new RegExp(`<meta[^>]+(?:property|name)=["']${prop}["'][^>]*content=["']([^"']+)["']`, 'i'))
+  const b = html.match(new RegExp(`<meta[^>]+content=["']([^"']+)["'][^>]*(?:property|name)=["']${prop}["']`, 'i'))
   return (a?.[1] || b?.[1] || '').replace(/&amp;/g, '&')
 }
 
@@ -565,7 +573,7 @@ function extractParagraphs(html: string): string[] {
 function pageToArticle(html: string) {
   return {
     title: decode(metaContent(html, 'og:title') || (html.match(/<title[^>]*>([\s\S]*?)<\/title>/i) || [])[1] || ''),
-    image: normalizeImage(metaContent(html, 'og:image') || ''),
+    image: normalizeImage(metaContent(html, 'og:image') || metaContent(html, 'twitter:image') || ''),
     paragraphs: extractParagraphs(html),
   }
 }
@@ -605,7 +613,11 @@ async function extractArticle(url: string) {
     )
     for (const row of rows) {
       if (!row) continue
-      if (row.article.paragraphs.length > best.paragraphs.length) best = row.article
+      if (row.article.paragraphs.length > best.paragraphs.length) {
+        best = { ...row.article, image: row.article.image || best.image }
+      } else if (!best.image && row.article.image) {
+        best = { ...best, image: row.article.image }
+      }
       add(row.amp)
     }
     if (isFullArticle(best.paragraphs)) return best
@@ -982,8 +994,8 @@ async function buildEdition(locations: string[], topics: string[]) {
     .slice(0, 6)
 
   await Promise.race([
-    fillImages(shelves.flatMap(s => s.stories).slice(0, 18)),
-    new Promise<void>(resolve => setTimeout(resolve, 800)),
+    fillImages(shelves.flatMap(s => s.stories).slice(0, 24)),
+    new Promise<void>(resolve => setTimeout(resolve, 4000)),
   ])
 
   const brief = buildBrief(shelves)

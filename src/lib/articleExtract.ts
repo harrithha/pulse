@@ -13,8 +13,9 @@ export function publisherAltUrls(url: string): string[] {
     }
 
     if (host === 'indianexpress.com' || host.endsWith('.indianexpress.com')) {
-      if (u.searchParams.get('outputType') === 'amp') return []
-      return [`${origin}${path}?outputType=amp`]
+      if (u.searchParams.get('outputType') === 'amp' || /\/lite\/?$/i.test(path)) return []
+      const lite = path.endsWith('/') ? `${origin}${path}lite/` : `${origin}${path}/lite/`
+      return [`${origin}${path}?outputType=amp`, lite]
     }
 
     if (host === 'timesofindia.indiatimes.com' || host.endsWith('.timesofindia.indiatimes.com')) {

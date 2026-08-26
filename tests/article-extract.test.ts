@@ -18,6 +18,7 @@ test('NDTV AMP pages are not rewritten again', () => {
 
 test('Indian Express, TOI, Mint, and CNBC get AMP variants', () => {
   assert.ok(publisherAltUrls('https://indianexpress.com/article/cities/mumbai/foo-123/')[0].includes('outputType=amp'))
+  assert.ok(publisherAltUrls('https://indianexpress.com/article/cities/mumbai/foo-123/').some(u => u.endsWith('/lite/')))
   assert.ok(publisherAltUrls('https://timesofindia.indiatimes.com/city/mumbai/foo/articleshow/123.cms')[0].includes('/amp_articleshow/'))
   assert.equal(publisherAltUrls('https://www.livemint.com/news/india/foo-123.html')[0], 'https://www.livemint.com/amp/news/india/foo-123.html')
   assert.equal(publisherAltUrls('https://www.cnbctv18.com/india/foo-123.htm')[0], 'https://www.cnbctv18.com/amp/india/foo-123.htm')
