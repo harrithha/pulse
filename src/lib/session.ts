@@ -10,6 +10,7 @@ export type Prefs = {
   homeCity?: City
   homeState?: StateName
   theme?: ThemeName
+  locationSkipped?: boolean
 }
 
 export function applyTheme(theme: ThemeName) {

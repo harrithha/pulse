@@ -6,12 +6,15 @@ import { detectHomePlace } from './lib/location'
 import {
   BROADER,
   CITIES,
+  CITY_TO_STATE,
   STATES,
   TOPICS,
   homePlaceLabel,
   isLegacyDefaultLocations,
   mergeHomeLocations,
+  type City,
   type HomePlace,
+  type StateName,
 } from './lib/places'
 import { readPrefs, readSession, writePrefs, applyTheme, type ThemeName } from './lib/session'
 import { canSpeak, packScriptGroups, prefetchSpeech, speakSections, type SpeechHandle } from './lib/speech'
@@ -397,7 +400,7 @@ function SiteHeader({
   const editing = tab === 'profile'
   const city = home.city
   const state = home.state
-  const locLabel = city || (detecting ? 'Locating…' : 'Set location')
+  const locLabel = city || (detecting ? 'Locating…' : 'India')
   const locTitle = homePlaceLabel(home) || locLabel
   return (
     <header className="sticky top-0 z-50 pulse-header">
@@ -478,10 +481,10 @@ function OnboardingLocation({
         <h1 className="font-serif text-[color:var(--ink)] text-[32px] sm:text-[42px] leading-tight mb-3">Where should we pull news from?</h1>
         <p className="text-sm sm:text-base mb-4" style={{ color: 'var(--muted)' }}>
           {detecting
-            ? 'Finding your city and state…'
+            ? 'Waiting for location permission…'
             : found
               ? `Your local rows stay on: ${found}. Add anywhere else you follow.`
-              : 'Pick the places that become your Home rows. We can also detect your city and state.'}
+              : 'We’ll show India news until you allow location or pick a city yourself.'}
         </p>
         <button
           type="button"
@@ -490,7 +493,7 @@ function OnboardingLocation({
           className="mb-8 sm:mb-10 text-sm font-semibold min-h-10"
           style={{ color: 'var(--amber)' }}
         >
-          {detecting ? 'Detecting…' : found ? 'Update from my location' : 'Detect my location'}
+          {detecting ? 'Waiting for permission…' : found ? 'Update from my location' : 'Allow location'}
         </button>
         <div className="space-y-8 mb-10 sm:mb-12">
           <div>
@@ -662,6 +665,59 @@ function searchStories(edition: NewsPayload, query: string, topic: string, home?
     .filter(s => topic === 'All' || shelfTitle(s.label) === topic)
     .flatMap(s => s.stories)
     .filter(s => !q || `${s.headline} ${s.summary} ${s.category} ${s.shelf} ${sourceName(s)}`.toLowerCase().includes(q))
+}
+
+function LocationAsk({
+  detecting,
+  onAllow,
+  onSkip,
+  onChoose,
+}: {
+  detecting: boolean
+  onAllow: () => void
+  onSkip: () => void
+  onChoose: () => void
+}) {
+  return (
+    <div className="max-w-[1320px] mx-auto px-4 sm:px-5 md:px-10 pt-4">
+      <div
+        className="rounded-2xl px-4 py-4 sm:px-5 sm:py-4"
+        style={{ background: 'var(--hero)', border: '1px solid var(--amber-border)' }}
+      >
+        <div className="text-sm font-semibold mb-1" style={{ color: 'var(--ink)' }}>Use your location for local news?</div>
+        <p className="text-sm mb-3" style={{ color: 'var(--muted)' }}>
+          Pulse only uses your city if you allow it. Otherwise you’ll see India news, and you can pick a place yourself.
+        </p>
+        <div className="flex flex-wrap gap-2">
+          <button
+            type="button"
+            onClick={onAllow}
+            disabled={detecting}
+            className="px-4 py-2 rounded-xl text-sm font-semibold min-h-10"
+            style={{ background: 'var(--orange)', color: '#FFFFFF' }}
+          >
+            {detecting ? 'Waiting for permission…' : 'Allow location'}
+          </button>
+          <button
+            type="button"
+            onClick={onSkip}
+            className="px-4 py-2 rounded-xl text-sm font-semibold min-h-10"
+            style={{ background: 'var(--elevated)', color: 'var(--ink)', border: '1px solid var(--border)' }}
+          >
+            Show India
+          </button>
+          <button
+            type="button"
+            onClick={onChoose}
+            className="px-4 py-2 rounded-xl text-sm font-semibold min-h-10"
+            style={{ color: 'var(--amber)' }}
+          >
+            Choose a city
+          </button>
+        </div>
+      </div>
+    </div>
+  )
 }
 
 function HomePage({
@@ -1026,10 +1082,10 @@ function ProfilePage({
       <h1 className="font-serif text-[color:var(--ink)] text-[32px] sm:text-[40px] mb-2">Edit topics</h1>
       <p className="text-sm mb-3" style={{ color: 'var(--muted)' }}>
         {detecting
-          ? 'Finding your city and state…'
+          ? 'Waiting for location permission…'
           : found
             ? `${found} stay on as your local rows. Tap other chips to add or remove them.`
-            : 'Tap a chip to add or remove it from Home. We can detect your city and state.'}
+            : 'Showing India until you allow location or pick a city. Tap a chip to follow a place.'}
       </p>
       <button
         type="button"
@@ -1038,7 +1094,7 @@ function ProfilePage({
         className="text-sm font-semibold mb-8 min-h-10"
         style={{ color: 'var(--amber)' }}
       >
-        {detecting ? 'Detecting…' : found ? 'Update from my location' : 'Detect my location'}
+        {detecting ? 'Waiting for permission…' : found ? 'Update from my location' : 'Allow location'}
       </button>
       <div className="rounded-2xl p-5 mb-4" style={{ background: 'var(--surface)', border: '1px solid var(--border)' }}>
         <div className="text-[10px] font-semibold tracking-[0.22em] uppercase mb-3" style={{ color: 'var(--dim)' }}>Cities</div>
@@ -1088,6 +1144,7 @@ export default function App() {
   const [selTopics, setSelTopics] = useState<Set<string>>(new Set(['Technology', 'Business', 'Sports']))
   const [home, setHome] = useState<HomePlace>({})
   const [detecting, setDetecting] = useState(false)
+  const [locationSkipped, setLocationSkipped] = useState(false)
   const [theme, setTheme] = useState<ThemeName>(() =>
     typeof document !== 'undefined' && document.documentElement.dataset.theme === 'light' ? 'light' : 'dark',
   )
@@ -1150,6 +1207,7 @@ export default function App() {
     }
     setSelLoc(mergeHomeLocations(locs, savedHome))
     if (prefs?.topics) setSelTopics(new Set(prefs.topics))
+    setLocationSkipped(Boolean(prefs?.locationSkipped))
     const cached = readCachedEdition([...mergeHomeLocations(locs, savedHome)], topics)
     if (cached?.shelves.length) setEdition(cached)
     setSession(existing ?? GUEST_SESSION)
@@ -1179,8 +1237,9 @@ export default function App() {
       homeCity: home.city,
       homeState: home.state,
       theme,
+      locationSkipped,
     })
-  }, [selLoc, selTopics, onboarded, home, theme, hydrated])
+  }, [selLoc, selTopics, onboarded, home, theme, locationSkipped, hydrated])
 
   useEffect(() => {
     if (!hydrated || !session || !onboarded) return
@@ -1220,39 +1279,55 @@ export default function App() {
     })
   }
 
-  const runDetect = (preferGps: boolean) => {
+  const runDetect = () => {
     setDetecting(true)
-    void detectHomePlace(preferGps)
+    void detectHomePlace()
       .then(found => {
-        if (found) applyDetectedHome(found, preferGps)
+        if (found) {
+          applyDetectedHome(found, true)
+          setLocationSkipped(false)
+          return
+        }
+        setLocationSkipped(true)
+        setSelLoc(prev => {
+          const next = new Set(prev)
+          next.add('India')
+          return next
+        })
       })
       .finally(() => setDetecting(false))
   }
 
-  useEffect(() => {
-    if (!hydrated) return
-    if (home.city || home.state) return
-    let cancelled = false
-    setDetecting(true)
-    void detectHomePlace(false)
-      .then(found => {
-        if (cancelled || !found) return
-        applyDetectedHome(found, false)
-      })
-      .finally(() => {
-        if (!cancelled) setDetecting(false)
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [hydrated, home.city, home.state])
+  const skipLocation = () => {
+    setLocationSkipped(true)
+    setSelLoc(prev => {
+      const next = new Set(prev)
+      next.add('India')
+      return next.size ? next : new Set(['India', 'World'])
+    })
+  }
 
   const toggleLoc = (loc: string) =>
     setSelLoc(prev => {
-      if ((home.city === loc || home.state === loc) && prev.has(loc)) return prev
       const n = new Set(prev)
-      n.has(loc) ? n.delete(loc) : n.add(loc)
-      if (!n.size) return prev
+      if (n.has(loc)) {
+        n.delete(loc)
+        if (home.city === loc) setHome({})
+        else if (home.state === loc) setHome(h => ({ ...h, state: undefined }))
+      } else {
+        n.add(loc)
+        if ((CITIES as readonly string[]).includes(loc)) {
+          const city = loc as City
+          const state = CITY_TO_STATE[city]
+          setHome({ city, state })
+          if (state) n.add(state)
+          setLocationSkipped(true)
+        } else if ((STATES as readonly string[]).includes(loc) && !home.city) {
+          setHome(h => ({ ...h, state: loc as StateName }))
+          setLocationSkipped(true)
+        }
+      }
+      if (!n.size) n.add('India')
       return n
     })
 
@@ -1300,7 +1375,7 @@ export default function App() {
         home={home}
         detecting={detecting}
         onToggle={toggleLoc}
-        onDetect={() => runDetect(true)}
+        onDetect={() => runDetect()}
         onNext={() => pushRoute('onboarding-topics')}
       />
     )
@@ -1335,6 +1410,17 @@ export default function App() {
         }}
         refreshing={loading}
       />
+      {screen === 'home' && !home.city && !home.state && !locationSkipped && (
+        <LocationAsk
+          detecting={detecting}
+          onAllow={() => runDetect()}
+          onSkip={skipLocation}
+          onChoose={() => {
+            setLocationSkipped(true)
+            pushRoute('profile')
+          }}
+        />
+      )}
       {screen === 'home' && (
         <HomePage
           edition={edition}
@@ -1354,7 +1440,7 @@ export default function App() {
           fetchedAt={edition.fetchedAt}
           onToggleLoc={toggleLoc}
           onToggleTopic={toggleTopic}
-          onDetect={() => runDetect(true)}
+          onDetect={() => runDetect()}
           onNext={() => {
             setRefreshNonce(n => n + 1)
             pushRoute('home')
