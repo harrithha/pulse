@@ -3,6 +3,12 @@ import type { Plugin, PreviewServer, ViteDevServer } from 'vite'
 import { handleTts, type TtsOptions } from './pulse-tts.js'
 import { ampHtmlHref, isFullArticle, publisherAltUrls, splitArticleBody } from './src/lib/articleExtract.js'
 import { cleanArticleParagraphs, isJunkParagraph } from './src/lib/articleText.js'
+import {
+  googleNewsArticleId,
+  googleNewsBatchexecuteBody,
+  isGoogleNewsUrl,
+  parseGoogleNewsBatchResponse,
+} from './src/lib/googleNews.js'
 
 const UA =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'
@@ -60,6 +66,27 @@ function isAllowedSource(name: string, url = '') {
     /economic times|economictimes/.test(t)
   )
 }
+
+function publisherKey(name = '') {
+  const t = name.toLowerCase()
+  if (/economic times|economictimes/.test(t)) return 'et'
+  if (/times of india|timesofindia|\btoi\b/.test(t)) return 'toi'
+  if (/\bndtv\b/.test(t)) return 'ndtv'
+  if (/indian express|indianexpress/.test(t)) return 'ie'
+  if (/\bmint\b|livemint/.test(t)) return 'mint'
+  if (/\bcnbc/.test(t)) return 'cnbc'
+  return t.replace(/[^a-z0-9]+/g, '')
+}
+
+const IMAGE_FEEDS: Feed[] = [
+  { shelf: '_img', url: 'https://feeds.feedburner.com/ndtvnews-latest', publisher: 'NDTV' },
+  { shelf: '_img', url: 'https://feeds.feedburner.com/ndtvmovies-latest', publisher: 'NDTV' },
+  { shelf: '_img', url: 'https://economictimes.indiatimes.com/rssfeedsdefault.cms', publisher: 'The Economic Times' },
+  { shelf: '_img', url: 'https://timesofindia.indiatimes.com/rssfeedstopstories.cms', publisher: 'The Times of India' },
+  { shelf: '_img', url: 'https://indianexpress.com/feed/', publisher: 'The Indian Express' },
+  { shelf: '_img', url: 'https://www.livemint.com/rss/news', publisher: 'Mint' },
+  { shelf: '_img', url: 'https://www.cnbctv18.com/commonfeeds/v1/cne/rss/latest.xml', publisher: 'CNBC' },
+]
 
 const TOI_CITY: Record<string, string> = {
   Pune: 'https://timesofindia.indiatimes.com/rssfeeds/-2128821991.cms',
@@ -178,6 +205,7 @@ type BriefSection = {
 
 const cache = new Map<string, { at: number; body: string }>()
 const CACHE_MS = 8 * 60 * 1000
+const googleResolveCache = new Map<string, Promise<string>>()
 
 function googleSearch(query: string) {
   return `https://news.google.com/rss/search?q=${encodeURIComponent(`(${query}) (${GOOGLE_SITES}) when:1d`)}&hl=en-IN&gl=IN&ceid=IN:en`
@@ -406,7 +434,7 @@ function parseRss(xml: string, shelf: string, publisherHint?: string): RawItem[]
 }
 
 async function fetchText(url: string, timeoutMs = 3200, accept = 'application/rss+xml, application/xml, text/xml, text/html, */*') {
-  const ms = /news\.google\.com/i.test(url) ? Math.min(timeoutMs, 1600) : timeoutMs
+  const ms = isGoogleNewsUrl(url) ? Math.max(timeoutMs, 5000) : timeoutMs
   const page = await fetchPage(url, ms, accept)
   return page?.html ?? null
 }
@@ -432,15 +460,98 @@ async function fetchPage(url: string, timeoutMs = 3200, accept = 'text/html, */*
 
 function decodeGoogleNewsUrl(url: string) {
   try {
-    const encoded = url.match(/\/(?:rss\/)?articles\/([A-Za-z0-9_-]+)/)?.[1]
+    const encoded = googleNewsArticleId(url)
     if (!encoded) return ''
     const buf = Buffer.from(encoded.replace(/-/g, '+').replace(/_/g, '/'), 'base64')
     const text = buf.toString('utf8')
     const found = [...text.matchAll(/https?:\/\/[^\s\x00-\x1f"'<>]+/g)].map(m => m[0].replace(/[),.;]+$/, ''))
-    return found.find(h => allowedHost(h) && !/news\.google\.com/i.test(h)) || ''
+    return found.find(h => allowedHost(h) && !isGoogleNewsUrl(h)) || ''
   } catch {
     return ''
   }
+}
+
+async function mapLimit<T>(items: T[], limit: number, fn: (item: T) => Promise<void>) {
+  let i = 0
+  const n = Math.max(1, Math.min(limit, items.length))
+  await Promise.all(
+    Array.from({ length: n }, async () => {
+      while (i < items.length) {
+        const item = items[i++]
+        await fn(item)
+      }
+    }),
+  )
+}
+
+async function resolveGoogleNewsUrl(url: string) {
+  const articleId = googleNewsArticleId(url)
+  if (!articleId) return ''
+  const splash = `https://news.google.com/articles/${articleId}?hl=en-IN&gl=IN&ceid=IN:en`
+  const ctrl = new AbortController()
+  const timer = setTimeout(() => ctrl.abort(), 9000)
+  let html = ''
+  let finalUrl = splash
+  try {
+    const res = await fetch(splash, {
+      signal: ctrl.signal,
+      redirect: 'follow',
+      headers: {
+        'User-Agent': UA,
+        Accept: 'text/html,application/xhtml+xml',
+        'Accept-Language': 'en-IN,en;q=0.9',
+        Referer: 'https://news.google.com/',
+      },
+    })
+    html = await res.text()
+    finalUrl = res.url || splash
+    if (res.status === 429) {
+      await new Promise(resolve => setTimeout(resolve, 900))
+      const retry = await fetch(splash, {
+        redirect: 'follow',
+        headers: {
+          'User-Agent': UA,
+          Accept: 'text/html,application/xhtml+xml',
+          'Accept-Language': 'en-IN,en;q=0.9',
+          Referer: 'https://news.google.com/',
+        },
+      })
+      html = await retry.text()
+      finalUrl = retry.url || splash
+      if (!retry.ok && html.length < 4000) return ''
+    } else if (!res.ok && html.length < 4000) {
+      return ''
+    }
+  } catch {
+    return ''
+  } finally {
+    clearTimeout(timer)
+  }
+  const signature = html.match(/data-n-a-sg="([^"]+)"/)?.[1]
+  const timestamp = html.match(/data-n-a-ts="([^"]+)"/)?.[1]
+  if (finalUrl && !isGoogleNewsUrl(finalUrl) && allowedHost(finalUrl)) return finalUrl
+  if (!signature || !timestamp) return ''
+  const batchCtrl = new AbortController()
+  const batchTimer = setTimeout(() => batchCtrl.abort(), 4500)
+  try {
+    const res = await fetch('https://news.google.com/_/DotsSplashUi/data/batchexecute', {
+      method: 'POST',
+      signal: batchCtrl.signal,
+      headers: {
+        ...FETCH_HEADERS,
+        'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8',
+        Referer: 'https://news.google.com/',
+      },
+      body: googleNewsBatchexecuteBody(articleId, timestamp, signature),
+    })
+    const dest = parseGoogleNewsBatchResponse(await res.text())
+    if (dest && allowedHost(dest) && !isGoogleNewsUrl(dest)) return dest
+  } catch {
+    return ''
+  } finally {
+    clearTimeout(batchTimer)
+  }
+  return ''
 }
 
 function publisherFallbacks(url: string) {
@@ -449,24 +560,31 @@ function publisherFallbacks(url: string) {
 
 async function resolveArticleUrl(url: string) {
   if (!url) return url
-  if (!/news\.google\.com/i.test(url)) return url
-  const decoded = decodeGoogleNewsUrl(url)
-  if (decoded) return decoded
-  const page = await fetchPage(url, 8000)
-  if (!page) return url
-  if (page.url && !/news\.google\.com/i.test(page.url) && allowedHost(page.url)) return page.url
-  const canonical =
-    page.html.match(/<link[^>]+rel=["']canonical["'][^>]+href=["']([^"']+)/i)?.[1] ||
-    metaContent(page.html, 'og:url')
-  if (canonical && !/news\.google\.com/i.test(canonical) && allowedHost(canonical)) return decode(canonical)
-  const hrefs = [...page.html.matchAll(/href=["'](https?:\/\/[^"']+)["']/gi)].map(m => decode(m[1]))
-  return hrefs.find(h => allowedHost(h) && !/news\.google\.com|accounts\.google|google\.com\/url/i.test(h)) || url
+  if (!isGoogleNewsUrl(url)) return url
+  const hit = googleResolveCache.get(url)
+  if (hit) return hit
+  const work = (async () => {
+    const decoded = decodeGoogleNewsUrl(url)
+    if (decoded) return decoded
+    const fromBatch = await resolveGoogleNewsUrl(url)
+    return fromBatch || url
+  })()
+  googleResolveCache.set(url, work)
+  return work
+}
+
+function applyResolvedUrl(story: Story, resolved: string) {
+  if (!resolved || isGoogleNewsUrl(resolved) || !allowedHost(resolved)) return
+  if (isGoogleNewsUrl(story.url)) story.url = resolved
+  for (const publisher of story.publishers) {
+    if (isGoogleNewsUrl(publisher.url)) publisher.url = resolved
+  }
 }
 
 async function ogImage(url: string) {
   if (!url) return
-  const target = /news\.google\.com/i.test(url) ? await resolveArticleUrl(url) : url
-  if (!target || /news\.google\.com/i.test(target)) return
+  const target = isGoogleNewsUrl(url) ? await resolveArticleUrl(url) : url
+  if (!target || isGoogleNewsUrl(target)) return
   const html = await fetchText(target, 2500, 'text/html')
   if (!html) return
   const match =
@@ -479,14 +597,73 @@ async function ogImage(url: string) {
 
 async function fillImages(stories: Story[]) {
   const missing = stories.filter(story => !story.image)
-  await Promise.all(
-    missing.map(async story => {
-      const url =
-        story.publishers.find(p => p.url && !/news\.google\.com/i.test(p.url))?.url || story.url
-      const image = await ogImage(url)
-      if (image) story.image = image
+  const google = missing.filter(
+    story => isGoogleNewsUrl(story.url) || story.publishers.some(p => isGoogleNewsUrl(p.url)),
+  )
+  const direct = missing.filter(story => !google.includes(story))
+
+  await mapLimit(direct, 5, async story => {
+    const url = story.publishers.find(p => p.url && !isGoogleNewsUrl(p.url))?.url || story.url
+    const image = await ogImage(url)
+    if (image) story.image = image
+  })
+
+  await mapLimit(google.slice(0, 6), 1, async story => {
+    const url =
+      story.publishers.find(p => p.url && !isGoogleNewsUrl(p.url))?.url ||
+      story.publishers.find(p => p.url)?.url ||
+      story.url
+    const resolved = isGoogleNewsUrl(url) ? await resolveArticleUrl(url) : url
+    applyResolvedUrl(story, resolved)
+    const image = await ogImage(resolved)
+    if (image) story.image = image
+  })
+}
+
+async function backfillFromPublisherRss(stories: Story[]) {
+  const need = stories.filter(
+    story => !story.image && (isGoogleNewsUrl(story.url) || story.publishers.some(p => isGoogleNewsUrl(p.url))),
+  )
+  if (!need.length) return
+  const lists = await Promise.all(
+    IMAGE_FEEDS.map(async feed => {
+      const xml = await fetchText(feed.url)
+      return xml ? parseRss(xml, '_img', feed.publisher) : []
     }),
   )
+  const pool = lists.flat()
+  for (const story of need) {
+    const want = publisherKey(story.publishers[0]?.name || '')
+    const t = tokens(story.headline)
+    let best: RawItem | undefined
+    let bestScore = 0
+    let bestSame = false
+    for (const item of pool) {
+      const same = publisherKey(item.publisher) === want
+      const itemTokens = tokens(item.headline)
+      const score = jaccard(t, itemTokens)
+      const rare = t.filter(w => w.length >= 7 && itemTokens.includes(w)).length
+      const ok = same ? score >= 0.32 : score >= 0.55 || (rare >= 2 && score >= 0.28)
+      if (!ok) continue
+      if (same && !bestSame) {
+        best = item
+        bestScore = score
+        bestSame = true
+        continue
+      }
+      if (same === bestSame && score > bestScore) {
+        best = item
+        bestScore = score
+        bestSame = same
+      }
+    }
+    if (!best) continue
+    if (best.image) story.image = best.image
+    if (bestSame && best.url && !isGoogleNewsUrl(best.url)) {
+      story.url = best.url
+      if (story.publishers[0]) story.publishers[0].url = best.url
+    }
+  }
 }
 
 function allowedHost(url: string) {
@@ -933,6 +1110,7 @@ function feedsFor(locations: string[], topics: string[]) {
 }
 
 async function buildEdition(locations: string[], topics: string[]) {
+  googleResolveCache.clear()
   const locs = locations.length ? locations : ['India', 'World']
   const feeds = feedsFor(locs, topics)
   const unique = new Map(feeds.map(f => [`${f.shelf}|${f.url}`, f]))
@@ -994,8 +1172,15 @@ async function buildEdition(locations: string[], topics: string[]) {
     .slice(0, 6)
 
   await Promise.race([
-    fillImages(shelves.flatMap(s => s.stories.filter(story => !story.image).slice(0, 6))),
-    new Promise<void>(resolve => setTimeout(resolve, 4500)),
+    (async () => {
+      const imageless = shelves.flatMap(s => s.stories.filter(story => !story.image).slice(0, 12))
+      await Promise.race([
+        backfillFromPublisherRss(imageless),
+        new Promise<void>(resolve => setTimeout(resolve, 8000)),
+      ])
+      await fillImages(imageless)
+    })(),
+    new Promise<void>(resolve => setTimeout(resolve, 22000)),
   ])
 
   const brief = buildBrief(shelves)
