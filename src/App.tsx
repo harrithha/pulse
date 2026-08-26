@@ -419,9 +419,7 @@ function SiteHeader({
   refreshing: boolean
 }) {
   const editing = tab === 'profile'
-  const city = home.city
-  const state = home.state
-  const locLabel = city || state || (detecting ? 'Locating…' : 'World')
+  const locLabel = home.city || home.state || (detecting ? 'Locating…' : 'World')
   const locTitle = homePlaceLabel(home) || locLabel
   return (
     <header className="sticky top-0 z-50 pulse-header">
@@ -450,14 +448,7 @@ function SiteHeader({
             aria-label={`Location: ${locTitle}`}
           >
             <PinIcon />
-            <span className="header-loc-label">
-              {locLabel}
-              {city && state ? (
-                <span className="hidden sm:inline" style={{ color: 'var(--muted)', fontWeight: 500 }}>
-                  {' · '}{state}
-                </span>
-              ) : null}
-            </span>
+            <span className="header-loc-label">{locLabel}</span>
           </button>
           <button
             onClick={() => onNavigate('profile')}
