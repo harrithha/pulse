@@ -1151,6 +1151,7 @@ export default function App() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [refreshNonce, setRefreshNonce] = useState(0)
+  const wantFresh = useRef(false)
   const editionRef = useRef(edition)
   editionRef.current = edition
   const activeStoryRef = useRef(activeStory)
@@ -1246,6 +1247,11 @@ export default function App() {
   }, [focusShelves, hydrated])
 
   useEffect(() => {
+    if (!hydrated || !awaitingLocation) return
+    void loadEdition(['World', 'India'], [...selTopics])
+  }, [hydrated, awaitingLocation, selTopics])
+
+  useEffect(() => {
     if (!hydrated || !session || !onboarded) return
     if (awaitingLocation) {
       setLoading(true)
@@ -1262,14 +1268,17 @@ export default function App() {
       setLoading(true)
     }
     setError(null)
-    loadEdition(locs, topics, ctrl.signal, true)
+    loadEdition(locs, topics, ctrl.signal, wantFresh.current)
       .then(setEdition)
       .catch(err => {
         if ((err as Error).name === 'AbortError') return
         if (cached?.shelves.length) return
         setError(err instanceof Error ? err.message : 'Could not load today’s edition.')
       })
-      .finally(() => setLoading(false))
+      .finally(() => {
+        wantFresh.current = false
+        setLoading(false)
+      })
     return () => ctrl.abort()
   }, [hydrated, session, onboarded, selLoc, selTopics, refreshNonce, awaitingLocation])
 
@@ -1333,8 +1342,7 @@ export default function App() {
     runDetectRef.current()
     const unsub = subscribeGeolocationPermission(state => {
       if (state === 'granted') {
-        detectGen.current += 1
-        detectInflight.current = false
+        if (detectInflight.current) return
         runDetectRef.current()
       }
       if (state === 'denied') {
@@ -1348,7 +1356,7 @@ export default function App() {
     const onReturn = () => {
       if (document.visibilityState && document.visibilityState !== 'visible') return
       void queryGeolocationPermission().then(state => {
-        if (state !== 'granted') return
+        if (state !== 'granted' || detectInflight.current) return
         if (!readTabLocationGranted() || !homeRef.current.city) runDetectRef.current()
       })
     }
@@ -1452,7 +1460,10 @@ export default function App() {
         detecting={detecting}
         theme={theme}
         onNavigate={goTab}
-        onRefresh={() => setRefreshNonce(n => n + 1)}
+        onRefresh={() => {
+          wantFresh.current = true
+          setRefreshNonce(n => n + 1)
+        }}
         onToggleTheme={() => {
           const next = theme === 'dark' ? 'light' : 'dark'
           setTheme(next)

@@ -1,7 +1,15 @@
 import { matchHomePlace, matchHomePlaceFromCoords, type HomePlace, type RawPlace } from './places'
 
-const IP_TIMEOUT_MS = 8_000
-const GPS_AFTER_ALLOW_MS = 15_000
+const FALLBACK_MS = 2_500
+const CACHED_GPS: PositionOptions = {
+  enableHighAccuracy: false,
+  timeout: 2_500,
+  maximumAge: 15 * 60 * 1000,
+}
+const PROMPT_GPS: PositionOptions = {
+  enableHighAccuracy: false,
+  maximumAge: 15 * 60 * 1000,
+}
 
 async function fetchJson(url: string, signal: AbortSignal) {
   const res = await fetch(url, { signal })
@@ -49,7 +57,7 @@ async function fromIp(signal: AbortSignal): Promise<RawPlace | null> {
 
 async function lookupPlaceFromIp(): Promise<HomePlace | null> {
   const ctrl = new AbortController()
-  const timer = window.setTimeout(() => ctrl.abort(), IP_TIMEOUT_MS)
+  const timer = window.setTimeout(() => ctrl.abort(), FALLBACK_MS)
   try {
     const home = matchHomePlace(await fromIp(ctrl.signal))
     return hasPlace(home) ? home : null
@@ -62,7 +70,7 @@ async function lookupPlaceFromIp(): Promise<HomePlace | null> {
 
 async function lookupPlaceFromGps(coords: { lat: number; lon: number }): Promise<HomePlace | null> {
   const ctrl = new AbortController()
-  const timer = window.setTimeout(() => ctrl.abort(), IP_TIMEOUT_MS)
+  const timer = window.setTimeout(() => ctrl.abort(), FALLBACK_MS)
   try {
     const data = await fetchJson(
       `https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=${coords.lat}&longitude=${coords.lon}&localityLanguage=en`,
@@ -84,15 +92,11 @@ export function prefetchIpPlace() {
   ipPlace ??= lookupPlaceFromIp()
 }
 
-/** After Allow. Retries if the prefetch timed out while the permission sheet was open. */
 async function takeIpPlace(): Promise<HomePlace | null> {
   if (ipPlace) {
     const hit = await ipPlace
     if (hit) return hit
   }
-  ipPlace = lookupPlaceFromIp()
-  const retry = await ipPlace
-  if (retry) return retry
   ipPlace = lookupPlaceFromIp()
   return ipPlace
 }
@@ -140,7 +144,7 @@ function coordsFromPosition(pos: GeolocationPosition): { lat: number; lon: numbe
   return { lat: pos.coords.latitude, lon: pos.coords.longitude }
 }
 
-function readGpsCoords(): Promise<{ lat: number; lon: number } | undefined> {
+function readGps(options: PositionOptions): Promise<{ lat: number; lon: number } | undefined> {
   return new Promise(resolve => {
     if (!navigator.geolocation) {
       resolve(undefined)
@@ -149,12 +153,12 @@ function readGpsCoords(): Promise<{ lat: number; lon: number } | undefined> {
     navigator.geolocation.getCurrentPosition(
       pos => resolve(coordsFromPosition(pos)),
       () => resolve(undefined),
-      { enableHighAccuracy: false, timeout: GPS_AFTER_ALLOW_MS, maximumAge: 10 * 60 * 1000 },
+      options,
     )
   })
 }
 
-/** Browser prompt. After Allow, keep GPS coords so phones are not stuck on World when IP misses. */
+/** Browser prompt. Uses a cached GPS fix so Allow can resolve in milliseconds. */
 export function askLocationAccess(): Promise<LocationAccess> {
   return new Promise(resolve => {
     let done = false
@@ -179,7 +183,7 @@ export function askLocationAccess(): Promise<LocationAccess> {
     }
 
     let retried = false
-    const ask = (timeout?: number) => {
+    const ask = (options: PositionOptions) => {
       navigator.geolocation.getCurrentPosition(
         pos => finish({ access: 'granted', coords: coordsFromPosition(pos) }),
         err => {
@@ -191,22 +195,23 @@ export function askLocationAccess(): Promise<LocationAccess> {
           void queryGeolocationPermission().then(state => {
             if (done) return
             if (state === 'denied') finish({ access: 'denied' })
-            if (state === 'granted') finish({ access: 'granted' })
+            if (state === 'granted') {
+              void readGps(CACHED_GPS).then(coords => finish({ access: 'granted', coords }))
+              return
+            }
             if (state !== 'prompt' && state !== 'unknown') return
             if (!retried) {
               retried = true
-              ask()
+              ask(CACHED_GPS)
               return
             }
             if (state === 'unknown') finish({ access: 'granted' })
           })
         },
-        timeout
-          ? { enableHighAccuracy: false, timeout, maximumAge: 10 * 60 * 1000 }
-          : { enableHighAccuracy: false, maximumAge: 10 * 60 * 1000 },
+        options,
       )
     }
-    ask()
+    ask(PROMPT_GPS)
   })
 }
 
@@ -215,26 +220,21 @@ export type HomeDetectResult = {
   home: HomePlace | null
 }
 
-async function placeFromCoords(coords: { lat: number; lon: number }): Promise<HomePlace | null> {
+async function homeFromCoords(coords: { lat: number; lon: number }): Promise<HomePlace | null> {
   const near = matchHomePlaceFromCoords(coords.lat, coords.lon)
   if (near.city) return near
-  return lookupPlaceFromGps(coords)
+  const [named, ip] = await Promise.all([lookupPlaceFromGps(coords), takeIpPlace()])
+  if (named?.city) return named
+  if (ip?.city) return ip
+  return hasPlace(named) ? named : hasPlace(ip) ? ip : null
 }
 
-/** Ask first. After Allow, prefer GPS city (phones), then IP. After Block, home is null. */
+/** Ask first. After Allow, GPS metro match is instant; IP/geocode only if needed. */
 export async function detectHomePlace(): Promise<HomeDetectResult> {
   const access = await askLocationAccess()
   if (access.access !== 'granted') return { access: 'denied', home: null }
-  const coords = access.coords ?? (await readGpsCoords())
-  if (coords) {
-    const gps = await placeFromCoords(coords)
-    if (gps?.city) return { access: 'granted', home: gps }
-    const ip = await takeIpPlace()
-    if (ip?.city) return { access: 'granted', home: ip }
-    if (hasPlace(gps)) return { access: 'granted', home: gps }
-    if (hasPlace(ip)) return { access: 'granted', home: ip }
-    return { access: 'granted', home: null }
-  }
+  const coords = access.coords ?? (await readGps(CACHED_GPS))
+  if (coords) return { access: 'granted', home: await homeFromCoords(coords) }
   return { access: 'granted', home: await takeIpPlace() }
 }
 
