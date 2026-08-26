@@ -414,8 +414,14 @@ function SiteHeader({
             aria-label={`Location: ${locTitle}`}
           >
             <PinIcon />
-            <span className="truncate">{locLabel}</span>
-            {city && state ? <span className="hidden sm:inline" style={{ color: 'var(--muted)', fontWeight: 500 }}>· {state}</span> : null}
+            <span className="min-w-0 truncate">
+              {locLabel}
+              {city && state ? (
+                <span className="hidden sm:inline" style={{ color: 'var(--muted)', fontWeight: 500 }}>
+                  {' · '}{state}
+                </span>
+              ) : null}
+            </span>
           </button>
           <button
             onClick={() => onNavigate('profile')}
