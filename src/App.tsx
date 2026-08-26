@@ -2,7 +2,7 @@ import { useEffect, useId, useRef, useState, type ReactNode } from 'react'
 import { emptyEdition, getCachedStoryArticle, loadEdition, prefetchStoryArticle, readCachedEdition } from './lib/news'
 import { isFullArticle } from './lib/articleExtract'
 import { cleanArticleParagraphs } from './lib/articleText'
-import { detectHomePlace, onQuickPlace, queryGeolocationPermission, subscribeGeolocationPermission, takeEarlyDetect } from './lib/location'
+import { detectHomePlace, queryGeolocationPermission, subscribeGeolocationPermission } from './lib/location'
 import {
   BROADER,
   CITIES,
@@ -1239,50 +1239,27 @@ export default function App() {
     setTabLocationOk(true)
   }
 
-  const applySavedHome = () => {
-    const prefs = readPrefs()
-    if (!prefs?.homeCity && !prefs?.homeState) return false
-    applyDetectedHome({ city: prefs.homeCity, state: prefs.homeState }, true)
-    markTabLocationOk()
-    return true
-  }
-
   const detectGen = useRef(0)
-  const gpsRetries = useRef(0)
-  const usedEarlyDetect = useRef(false)
   const detectInflight = useRef(false)
-  const runDetect = (fromRetry = false) => {
-    if (detectInflight.current && !fromRetry) return
-    if (!fromRetry) gpsRetries.current = 0
+  const runDetect = () => {
+    if (detectInflight.current) return
     const gen = ++detectGen.current
     detectInflight.current = true
     setDetecting(true)
-    const task = !fromRetry && !usedEarlyDetect.current
-      ? (usedEarlyDetect.current = true, takeEarlyDetect())
-      : detectHomePlace()
-    void task
-      .then(async found => {
-        if (gen !== detectGen.current) return false
+    void detectHomePlace()
+      .then(found => {
+        if (gen !== detectGen.current) return
         if (found) {
-          gpsRetries.current = 0
           applyDetectedHome(found, true)
           markTabLocationOk()
-          return false
+          return
         }
-        const state = await queryGeolocationPermission()
-        if (gen !== detectGen.current) return false
-        if (state === 'granted' && gpsRetries.current < 1) {
-          gpsRetries.current += 1
-          runDetectRef.current(true)
-          return true
-        }
-        if (state !== 'granted') applyWorldDefault()
-        return false
+        applyWorldDefault()
       })
-      .then(retrying => {
+      .finally(() => {
         if (gen !== detectGen.current) return
         detectInflight.current = false
-        if (!retrying) setDetecting(false)
+        setDetecting(false)
       })
   }
   const runDetectRef = useRef(runDetect)
@@ -1290,35 +1267,20 @@ export default function App() {
 
   useEffect(() => {
     if (!hydrated) return
-    const unsubQuick = onQuickPlace(home => {
-      applyDetectedHome(home, true)
-      markTabLocationOk()
-      setDetecting(false)
-    })
-    void queryGeolocationPermission().then(state => {
-      if (state === 'granted') applySavedHome()
-    })
     runDetectRef.current()
     const unsub = subscribeGeolocationPermission(state => {
-      if (state === 'granted') {
-        applySavedHome()
-        runDetectRef.current()
-      }
+      if (state === 'granted') runDetectRef.current()
       if (state === 'denied') applyWorldDefault()
     })
     const onReturn = () => {
       if (document.visibilityState && document.visibilityState !== 'visible') return
       void queryGeolocationPermission().then(state => {
-        if (state === 'granted') {
-          applySavedHome()
-          if (!readTabLocationGranted()) runDetectRef.current()
-        }
+        if (state === 'granted' && !readTabLocationGranted()) runDetectRef.current()
       })
     }
     document.addEventListener('visibilitychange', onReturn)
     window.addEventListener('focus', onReturn)
     return () => {
-      unsubQuick()
       unsub()
       document.removeEventListener('visibilitychange', onReturn)
       window.removeEventListener('focus', onReturn)

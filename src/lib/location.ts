@@ -1,7 +1,5 @@
-import { matchHomePlace, matchHomePlaceFromCoords, type HomePlace, type RawPlace } from './places'
+import { matchHomePlace, type HomePlace, type RawPlace } from './places'
 
-const FIX_TIMEOUT_MS = 6_000
-const GEOCODE_TIMEOUT_MS = 2_000
 const IP_TIMEOUT_MS = 3_000
 
 async function fetchJson(url: string, signal: AbortSignal) {
@@ -18,7 +16,6 @@ function hasPlace(home: HomePlace | null | undefined): home is HomePlace {
   return Boolean(home && (home.city || home.state))
 }
 
-/** IP city/state looker — prefetched secretly, applied only after Allow. */
 async function fromIp(signal: AbortSignal): Promise<RawPlace | null> {
   const ipwho = fetchJson('https://ipwho.is/', signal).then(data => {
     if (data.success === false) throw new Error('ipwho')
@@ -65,120 +62,9 @@ export function prefetchIpPlace() {
   ipPlace ??= lookupPlaceFromIp()
 }
 
-export function takePrefetchedIpPlace() {
+function takeIpPlace() {
   prefetchIpPlace()
   return ipPlace ?? lookupPlaceFromIp()
-}
-
-const quickListeners = new Set<(home: HomePlace) => void>()
-let quickPlace: HomePlace | undefined
-
-function emitQuick(home: HomePlace) {
-  if (!hasPlace(home)) return
-  quickPlace = home
-  quickListeners.forEach(fn => fn(home))
-}
-
-/** Fires as soon as a city is known after Allow (usually IP, before GPS). */
-export function onQuickPlace(fn: (home: HomePlace) => void) {
-  quickListeners.add(fn)
-  if (quickPlace) fn(quickPlace)
-  return () => {
-    quickListeners.delete(fn)
-  }
-}
-
-function gpsCoords(): Promise<{ lat: number; lon: number } | null> {
-  return new Promise(resolve => {
-    if (!navigator.geolocation) {
-      resolve(null)
-      return
-    }
-    let settled = false
-    let watchId: number | undefined
-    let timer: number | undefined
-    let unsub: (() => void) | undefined
-
-    const finish = (coords: { lat: number; lon: number } | null) => {
-      if (settled) return
-      settled = true
-      if (watchId != null) navigator.geolocation.clearWatch(watchId)
-      if (timer != null) window.clearTimeout(timer)
-      unsub?.()
-      resolve(coords)
-    }
-
-    const armTimer = () => {
-      if (settled || timer != null) return
-      timer = window.setTimeout(() => finish(null), FIX_TIMEOUT_MS)
-    }
-
-    const onOk = (pos: GeolocationPosition) => {
-      finish({ lat: pos.coords.latitude, lon: pos.coords.longitude })
-    }
-
-    try {
-      watchId = navigator.geolocation.watchPosition(
-        onOk,
-        err => {
-          if (err.code === err.PERMISSION_DENIED) finish(null)
-        },
-        {
-          enableHighAccuracy: false,
-          maximumAge: 15 * 60 * 1000,
-          timeout: 25_000,
-        },
-      )
-    } catch {
-      navigator.geolocation.getCurrentPosition(onOk, () => finish(null), {
-        enableHighAccuracy: false,
-        maximumAge: 15 * 60 * 1000,
-        timeout: 25_000,
-      })
-    }
-
-    void queryGeolocationPermission().then(state => {
-      if (settled) return
-      if (state === 'denied') finish(null)
-      if (state === 'granted') {
-        armTimer()
-        void applyIpLooker()
-      }
-    })
-    unsub = subscribeGeolocationPermission(state => {
-      if (state === 'denied') finish(null)
-      if (state === 'granted') {
-        armTimer()
-        void applyIpLooker()
-      }
-    })
-  })
-}
-
-async function applyIpLooker() {
-  const home = await takePrefetchedIpPlace()
-  if (home) emitQuick(home)
-}
-
-async function reverseGeocode(lat: number, lon: number): Promise<RawPlace | null> {
-  const ctrl = new AbortController()
-  const timer = window.setTimeout(() => ctrl.abort(), GEOCODE_TIMEOUT_MS)
-  try {
-    const data = await fetchJson(
-      `https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=${lat}&longitude=${lon}&localityLanguage=en`,
-      ctrl.signal,
-    )
-    return {
-      city: asString(data.city),
-      locality: asString(data.locality),
-      region: asString(data.principalSubdivision),
-      country: asString(data.countryName),
-    }
-  } catch {
-    return null
-  } finally {
-    window.clearTimeout(timer)
-  }
 }
 
 export type GeoPermission = PermissionState | 'unknown'
@@ -215,34 +101,51 @@ export function subscribeGeolocationPermission(onChange: (state: PermissionState
   }
 }
 
-/** GPS after Allow. IP looker paints the city first; GPS may refine it. */
-export async function detectHomePlace(): Promise<HomePlace | null> {
-  void queryGeolocationPermission().then(state => {
-    if (state === 'granted') void applyIpLooker()
+/** Browser prompt only. Does not read GPS coords. */
+export function askLocationAccess(): Promise<'granted' | 'denied'> {
+  return new Promise(resolve => {
+    let done = false
+    let unsub = () => {}
+    const finish = (status: 'granted' | 'denied') => {
+      if (done) return
+      done = true
+      unsub()
+      resolve(status)
+    }
+
+    void queryGeolocationPermission().then(state => {
+      if (state === 'granted') finish('granted')
+      if (state === 'denied') finish('denied')
+    })
+    unsub = subscribeGeolocationPermission(state => {
+      if (state === 'granted') finish('granted')
+      if (state === 'denied') finish('denied')
+    })
+
+    if (!navigator.geolocation) {
+      finish('denied')
+      return
+    }
+    navigator.geolocation.getCurrentPosition(
+      () => finish('granted'),
+      err => {
+        if (err.code === err.PERMISSION_DENIED) finish('denied')
+        void queryGeolocationPermission().then(state => {
+          if (state === 'granted') finish('granted')
+          if (state === 'denied') finish('denied')
+          if (state === 'unknown') finish('granted')
+        })
+      },
+      { enableHighAccuracy: false, timeout: 8_000, maximumAge: 10 * 60 * 1000 },
+    )
   })
-
-  const coords = await gpsCoords()
-  if (!coords) return quickPlace ?? null
-
-  const nearby = matchHomePlaceFromCoords(coords.lat, coords.lon)
-  if (hasPlace(nearby)) return nearby
-
-  const named = matchHomePlace(await reverseGeocode(coords.lat, coords.lon))
-  if (hasPlace(named)) return named
-  return quickPlace ?? null
 }
 
-let earlyDetect: Promise<HomePlace | null> | undefined
-
-export function prefetchHomePlace() {
-  prefetchIpPlace()
-  if (typeof navigator === 'undefined' || !navigator.geolocation) return
-  earlyDetect ??= detectHomePlace()
+/** Ask first. After Allow, detect city from IP. After Block, return null. */
+export async function detectHomePlace(): Promise<HomePlace | null> {
+  const access = await askLocationAccess()
+  if (access !== 'granted') return null
+  return takeIpPlace()
 }
 
-export function takeEarlyDetect() {
-  prefetchHomePlace()
-  return earlyDetect ?? detectHomePlace()
-}
-
-prefetchHomePlace()
+prefetchIpPlace()
