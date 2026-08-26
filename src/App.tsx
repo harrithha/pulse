@@ -419,8 +419,7 @@ function SiteHeader({
   refreshing: boolean
 }) {
   const editing = tab === 'profile'
-  const locLabel = home.city || home.state || (detecting ? 'Locating…' : 'World')
-  const locTitle = homePlaceLabel(home) || locLabel
+  const locLabel = home.city || (detecting ? 'Locating…' : 'World')
   return (
     <header className="sticky top-0 z-50 pulse-header">
       <div className="px-3 sm:px-5 md:px-10 h-14 md:h-16 flex items-center gap-2 sm:gap-3 flex-nowrap overflow-hidden">
@@ -444,8 +443,8 @@ function SiteHeader({
             type="button"
             onClick={() => onNavigate('profile')}
             className={`header-chip is-location ${editing ? 'is-active' : ''}`}
-            title={locTitle}
-            aria-label={`Location: ${locTitle}`}
+            title={locLabel}
+            aria-label={`Location: ${locLabel}`}
           >
             <PinIcon />
             <span className="header-loc-label">{locLabel}</span>
