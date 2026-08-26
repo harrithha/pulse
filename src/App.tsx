@@ -12,6 +12,7 @@ import {
   homePlaceLabel,
   isLegacyDefaultLocations,
   mergeHomeLocations,
+  shelfGeoRank,
   type HomePlace,
 } from './lib/places'
 import { readPrefs, readSession, writePrefs, applyTheme, readTabLocationGranted, writeTabLocation, readFocusShelves, writeFocusShelves, type ThemeName } from './lib/session'
@@ -103,10 +104,7 @@ function prefetchStoryListen(story: StoryCard, paragraphs: string[] = []) {
 }
 
 function uniqueStoriesAcrossShelves(shelves: NewsPayload['shelves']) {
-  const cityFirst = [...shelves].sort((a, b) => {
-    const rank = (label: string) => (label.startsWith('My City') ? 0 : (STATES as readonly string[]).includes(label) ? 1 : 2)
-    return rank(a.label) - rank(b.label)
-  })
+  const cityFirst = [...shelves].sort((a, b) => shelfGeoRank(a.label) - shelfGeoRank(b.label))
   const seen = new Set<string>()
   const kept = new Map<string, NewsPayload['shelves'][0]['stories']>()
   for (const shelf of cityFirst) {
@@ -1139,8 +1137,9 @@ export default function App() {
   const [selTopics, setSelTopics] = useState<Set<string>>(new Set(['Technology', 'Business', 'Sports']))
   const [focusShelves, setFocusShelves] = useState<string[]>([])
   const [home, setHome] = useState<HomePlace>({})
-  const [detecting, setDetecting] = useState(false)
+  const [detecting, setDetecting] = useState(true)
   const [tabLocationOk, setTabLocationOk] = useState(false)
+  const [awaitingLocation, setAwaitingLocation] = useState(true)
   const [theme, setTheme] = useState<ThemeName>(() =>
     typeof document !== 'undefined' && document.documentElement.dataset.theme === 'light' ? 'light' : 'dark',
   )
@@ -1195,6 +1194,7 @@ export default function App() {
     const prefs = readPrefs()
     const granted = readTabLocationGranted()
     setTabLocationOk(granted)
+    setAwaitingLocation(!granted)
     const savedHome: HomePlace = granted ? { city: prefs?.homeCity, state: prefs?.homeState } : {}
     const locs = granted && prefs?.locations?.length ? prefs.locations : ['World', 'India']
     const topics = prefs?.topics?.length ? prefs.topics : ['Technology', 'Business', 'Sports']
@@ -1246,6 +1246,10 @@ export default function App() {
 
   useEffect(() => {
     if (!hydrated || !session || !onboarded) return
+    if (awaitingLocation) {
+      setLoading(true)
+      return
+    }
     const ctrl = new AbortController()
     const locs = [...selLoc]
     const topics = [...selTopics]
@@ -1266,7 +1270,7 @@ export default function App() {
       })
       .finally(() => setLoading(false))
     return () => ctrl.abort()
-  }, [hydrated, session, onboarded, selLoc, selTopics, refreshNonce])
+  }, [hydrated, session, onboarded, selLoc, selTopics, refreshNonce, awaitingLocation])
 
   const applyDetectedHome = (found: HomePlace, replacePreviousHome: boolean) => {
     setHome(prevHome => {
@@ -1302,19 +1306,20 @@ export default function App() {
     detectInflight.current = true
     setDetecting(true)
     void detectHomePlace()
-      .then(found => {
+      .then(result => {
         if (gen !== detectGen.current) return
-        if (found) {
-          applyDetectedHome(found, true)
-          markTabLocationOk()
+        if (result.access !== 'granted') {
+          applyWorldDefault()
           return
         }
-        applyWorldDefault()
+        markTabLocationOk()
+        if (result.home) applyDetectedHome(result.home, true)
       })
       .finally(() => {
         if (gen !== detectGen.current) return
         detectInflight.current = false
         setDetecting(false)
+        setAwaitingLocation(false)
       })
   }
   const runDetectRef = useRef(runDetect)
@@ -1324,8 +1329,18 @@ export default function App() {
     if (!hydrated) return
     runDetectRef.current()
     const unsub = subscribeGeolocationPermission(state => {
-      if (state === 'granted') runDetectRef.current()
-      if (state === 'denied') applyWorldDefault()
+      if (state === 'granted') {
+        detectGen.current += 1
+        detectInflight.current = false
+        runDetectRef.current()
+      }
+      if (state === 'denied') {
+        detectGen.current += 1
+        detectInflight.current = false
+        setDetecting(false)
+        setAwaitingLocation(false)
+        applyWorldDefault()
+      }
     })
     const onReturn = () => {
       if (document.visibilityState && document.visibilityState !== 'visible') return

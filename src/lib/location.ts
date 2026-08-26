@@ -1,6 +1,6 @@
 import { matchHomePlace, type HomePlace, type RawPlace } from './places'
 
-const IP_TIMEOUT_MS = 3_000
+const IP_TIMEOUT_MS = 8_000
 
 async function fetchJson(url: string, signal: AbortSignal) {
   const res = await fetch(url, { signal })
@@ -62,9 +62,17 @@ export function prefetchIpPlace() {
   ipPlace ??= lookupPlaceFromIp()
 }
 
-function takeIpPlace() {
-  prefetchIpPlace()
-  return ipPlace ?? lookupPlaceFromIp()
+/** After Allow. Retries if the prefetch timed out while the permission sheet was open. */
+async function takeIpPlace(): Promise<HomePlace | null> {
+  if (ipPlace) {
+    const hit = await ipPlace
+    if (hit) return hit
+  }
+  ipPlace = lookupPlaceFromIp()
+  const retry = await ipPlace
+  if (retry) return retry
+  ipPlace = lookupPlaceFromIp()
+  return ipPlace
 }
 
 export type GeoPermission = PermissionState | 'unknown'
@@ -101,7 +109,13 @@ export function subscribeGeolocationPermission(onChange: (state: PermissionState
   }
 }
 
-/** Browser prompt only. Does not read GPS coords. */
+function geoOptions(timeout?: number): PositionOptions {
+  return timeout
+    ? { enableHighAccuracy: false, timeout, maximumAge: 10 * 60 * 1000 }
+    : { enableHighAccuracy: false, maximumAge: 10 * 60 * 1000 }
+}
+
+/** Browser prompt only. Does not read GPS coords. Waits for Allow — Chrome's timeout includes the sheet. */
 export function askLocationAccess(): Promise<'granted' | 'denied'> {
   return new Promise(resolve => {
     let done = false
@@ -126,26 +140,48 @@ export function askLocationAccess(): Promise<'granted' | 'denied'> {
       finish('denied')
       return
     }
-    navigator.geolocation.getCurrentPosition(
-      () => finish('granted'),
-      err => {
-        if (err.code === err.PERMISSION_DENIED) finish('denied')
-        void queryGeolocationPermission().then(state => {
-          if (state === 'granted') finish('granted')
-          if (state === 'denied') finish('denied')
-          if (state === 'unknown') finish('granted')
-        })
-      },
-      { enableHighAccuracy: false, timeout: 8_000, maximumAge: 10 * 60 * 1000 },
-    )
+
+    let retried = false
+    const ask = (timeout?: number) => {
+      navigator.geolocation.getCurrentPosition(
+        () => finish('granted'),
+        err => {
+          if (done) return
+          if (err.code === err.PERMISSION_DENIED) {
+            finish('denied')
+            return
+          }
+          void queryGeolocationPermission().then(state => {
+            if (done) return
+            if (state === 'granted') finish('granted')
+            if (state === 'denied') finish('denied')
+            if (state !== 'prompt' && state !== 'unknown') return
+            // Chrome times out the sheet; ask again with no timeout so Allow still counts.
+            if (!retried) {
+              retried = true
+              ask()
+              return
+            }
+            if (state === 'unknown') finish('granted')
+          })
+        },
+        geoOptions(timeout),
+      )
+    }
+    ask()
   })
 }
 
-/** Ask first. After Allow, detect city from IP. After Block, return null. */
-export async function detectHomePlace(): Promise<HomePlace | null> {
+export type HomeDetectResult = {
+  access: 'granted' | 'denied'
+  home: HomePlace | null
+}
+
+/** Ask first. After Allow, detect city from IP. After Block, home is null. */
+export async function detectHomePlace(): Promise<HomeDetectResult> {
   const access = await askLocationAccess()
-  if (access !== 'granted') return null
-  return takeIpPlace()
+  if (access !== 'granted') return { access: 'denied', home: null }
+  return { access: 'granted', home: await takeIpPlace() }
 }
 
 prefetchIpPlace()

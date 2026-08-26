@@ -15,6 +15,65 @@ export const CITY_TO_STATE: Partial<Record<City, StateName>> = {
   Ahmedabad: 'Gujarat',
 }
 
+export const PLACE_KEYWORDS: Record<string, string[]> = {
+  Pune: ['pune', 'pimpri', 'chinchwad', 'hadapsar'],
+  Mumbai: ['mumbai', 'bombay', 'thane', 'navi mumbai', 'bandra', 'andheri'],
+  Delhi: ['delhi', 'noida', 'gurgaon', 'gurugram', 'ncr'],
+  Bengaluru: ['bengaluru', 'bangalore'],
+  Chennai: ['chennai', 'madras'],
+  Hyderabad: ['hyderabad', 'secunderabad'],
+  Kolkata: ['kolkata', 'calcutta'],
+  Ahmedabad: ['ahmedabad'],
+  Maharashtra: ['maharashtra', 'mumbai', 'pune', 'nagpur', 'nashik', 'thane', 'aurangabad', 'kolhapur', 'solapur', 'navi mumbai', 'amravati'],
+  'Tamil Nadu': ['tamil nadu', 'chennai', 'coimbatore', 'madurai', 'tiruchirappalli', 'trichy', 'salem', 'erode', 'vellore', 'tirunelveli', 'thoothukudi', 'kanchipuram', 'hosur'],
+  Karnataka: ['karnataka', 'bengaluru', 'bangalore', 'mysuru', 'mysore', 'mangaluru', 'hubballi'],
+  Telangana: ['telangana', 'hyderabad', 'warangal', 'secunderabad'],
+  Gujarat: ['gujarat', 'ahmedabad', 'surat', 'vadodara', 'rajkot'],
+  Rajasthan: ['rajasthan', 'jaipur', 'jodhpur', 'udaipur'],
+  India: ['india', 'indian', 'new delhi', 'bharat'],
+}
+
+export function citiesInState(state: string) {
+  return (Object.entries(CITY_TO_STATE) as [City, StateName][]).filter(([, st]) => st === state).map(([city]) => city)
+}
+
+export function textMentionsPlace(text: string, place: string) {
+  const words = PLACE_KEYWORDS[place]
+  if (!words?.length) return false
+  const hay = text.toLowerCase()
+  return words.some(w => hay.includes(w))
+}
+
+/** Broader row (state / India / World) should not carry a story that belongs on a followed city or state. */
+export function hitsFollowedNarrowerPlace(text: string, shelf: string, followed: string[]) {
+  const followedSet = new Set(followed)
+  if ((STATES as readonly string[]).includes(shelf)) {
+    return citiesInState(shelf).some(city => followedSet.has(city) && textMentionsPlace(text, city))
+  }
+  if (shelf === 'India') {
+    return followed.some(loc => loc !== 'India' && loc !== 'World' && textMentionsPlace(text, loc))
+  }
+  if (shelf === 'World') {
+    return followed.some(loc => loc !== 'World' && loc !== 'India' && textMentionsPlace(text, loc))
+  }
+  return false
+}
+
+export function shelfGeoRank(label: string) {
+  if (label.startsWith('My City')) return 0
+  if ((STATES as readonly string[]).includes(label)) return 1
+  if (label === 'India') return 2
+  if (label === 'World') return 3
+  return 4
+}
+
+/** When the parent state is also followed, city rows keep only stories that actually name the city. */
+export function cityKeepsStory(text: string, city: string, followed: string[]) {
+  const parent = CITY_TO_STATE[city as City]
+  if (!parent || !followed.includes(parent)) return true
+  return textMentionsPlace(text, city)
+}
+
 const CITY_COORDS: Record<City, { lat: number; lon: number }> = {
   Pune: { lat: 18.5204, lon: 73.8567 },
   Mumbai: { lat: 19.076, lon: 72.8777 },

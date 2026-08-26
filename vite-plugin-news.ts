@@ -9,6 +9,7 @@ import {
   isGoogleNewsUrl,
   parseGoogleNewsBatchResponse,
 } from './src/lib/googleNews.js'
+import { CITIES, CITY_TO_STATE, cityKeepsStory, citiesInState, hitsFollowedNarrowerPlace, PLACE_KEYWORDS, STATES, shelfGeoRank, textMentionsPlace } from './src/lib/places.js'
 import { headlineDedupeKey, urlDedupeKey } from './src/lib/storyDedupe.js'
 
 const UA =
@@ -119,32 +120,12 @@ const STATE_HUB: Record<string, string> = {
   Gujarat: 'Ahmedabad',
 }
 
-const PLACE_WORDS: Record<string, string[]> = {
-  Pune: ['pune', 'pimpri', 'chinchwad', 'hadapsar'],
-  Mumbai: ['mumbai', 'bombay', 'thane', 'navi mumbai', 'bandra', 'andheri'],
-  Delhi: ['delhi', 'noida', 'gurgaon', 'gurugram', 'ncr'],
-  Bengaluru: ['bengaluru', 'bangalore'],
-  Chennai: ['chennai', 'madras'],
-  Hyderabad: ['hyderabad', 'secunderabad'],
-  Kolkata: ['kolkata', 'calcutta'],
-  Ahmedabad: ['ahmedabad'],
-  Maharashtra: ['maharashtra', 'mumbai', 'pune', 'nagpur', 'nashik', 'thane', 'aurangabad', 'kolhapur', 'solapur', 'navi mumbai', 'amravati'],
-  'Tamil Nadu': ['tamil nadu', 'chennai', 'coimbatore', 'madurai', 'tiruchirappalli', 'trichy', 'salem', 'erode', 'vellore', 'tirunelveli', 'thoothukudi', 'kanchipuram', 'hosur'],
-  Karnataka: ['karnataka', 'bengaluru', 'bangalore', 'mysuru', 'mysore', 'mangaluru', 'hubballi'],
-  Telangana: ['telangana', 'hyderabad', 'warangal', 'secunderabad'],
-  Gujarat: ['gujarat', 'ahmedabad', 'surat', 'vadodara', 'rajkot'],
-  Rajasthan: ['rajasthan', 'jaipur', 'jodhpur', 'udaipur'],
-}
-
 function placeLabelFromShelf(shelf: string) {
   return shelf.replace(/^My City · /, '').trim()
 }
 
 function mentionsPlace(item: { headline: string; url: string }, place: string) {
-  const words = PLACE_WORDS[place]
-  if (!words?.length) return true
-  const hay = `${item.headline} ${item.url}`.toLowerCase()
-  return words.some(w => hay.includes(w))
+  return textMentionsPlace(item.headline, place)
 }
 
 const TOPIC_PUBLISHER_FEEDS: Record<string, Feed[]> = {
@@ -1119,10 +1100,8 @@ function buildBrief(shelves: Array<{ label: string; stories: Story[] }>) {
 function feedsFor(locations: string[], topics: string[]) {
   const feeds: Feed[] = []
   const locSet = new Set(locations)
-  const cityLike = locations.filter(l => !['India', 'World', ...Object.keys(TOPIC_FEEDS), ...['Maharashtra', 'Tamil Nadu', 'Karnataka', 'Telangana', 'Gujarat', 'Rajasthan']].includes(l))
-  const states = locations.filter(l =>
-    ['Maharashtra', 'Tamil Nadu', 'Karnataka', 'Telangana', 'Gujarat', 'Rajasthan'].includes(l),
-  )
+  const cityLike = locations.filter(l => (CITIES as readonly string[]).includes(l))
+  const states = locations.filter(l => (STATES as readonly string[]).includes(l))
 
   for (const city of cityLike) {
     const toi = TOI_CITY[city]
@@ -1133,6 +1112,7 @@ function feedsFor(locations: string[], topics: string[]) {
   }
   for (const state of states) {
     const hub = STATE_HUB[state]
+    const followedCities = citiesInState(state).filter(city => locSet.has(city))
     const followingHub = Boolean(hub && locSet.has(hub))
     if (hub && TOI_CITY[hub] && !followingHub) {
       feeds.push({ shelf: state, url: TOI_CITY[hub], publisher: 'The Times of India' })
@@ -1143,7 +1123,8 @@ function feedsFor(locations: string[], topics: string[]) {
     if (state === 'Maharashtra') {
       feeds.push({ shelf: state, url: 'https://feeds.feedburner.com/ndtvnews-cities-news', publisher: 'NDTV' })
     }
-    feeds.push({ shelf: state, url: googleSearch(`${state} when:1d`) })
+    const excludeFollowed = followedCities.map(city => `-"${city}"`).join(' ')
+    feeds.push({ shelf: state, url: googleSearch(`${state} ${excludeFollowed}`.trim()) })
   }
   if (locSet.has('India')) {
     feeds.push(...INDIA_FEEDS)
@@ -1176,16 +1157,25 @@ async function buildEdition(locations: string[], topics: string[]) {
       if (!xml) return [] as RawItem[]
       const parsed = parseRss(xml, feed.shelf, feed.publisher)
       const place = placeLabelFromShelf(feed.shelf)
-      const googlePlaceFeed = !feed.publisher && PLACE_WORDS[place]
+      const googlePlaceFeed = !feed.publisher && PLACE_KEYWORDS[place]
       const local = googlePlaceFeed ? parsed.filter(item => mentionsPlace(item, place)) : parsed
+      const narrowed = local.filter(
+        item => !hitsFollowedNarrowerPlace(item.headline, feed.shelf, locs),
+      )
+      const parentState = CITY_TO_STATE[place as keyof typeof CITY_TO_STATE]
+      if (cityLikeLabel(place) && parentState && locs.includes(parentState)) {
+        for (const item of narrowed) {
+          if (!cityKeepsStory(item.headline, place, locs)) item.shelf = parentState
+        }
+      }
       if (feed.shelf === 'Maharashtra' && feed.publisher === 'NDTV') {
-        return local.filter(item =>
+        return narrowed.filter(item =>
           /\b(mumbai|pune|thane|nagpur|nashik|maharashtra|amravati|kolhapur|aurangabad|navi mumbai|chakan|wagholi)\b/i.test(
             `${item.headline} ${item.url}`,
           ),
         )
       }
-      return local
+      return narrowed
     }),
   )
 
@@ -1203,17 +1193,32 @@ async function buildEdition(locations: string[], topics: string[]) {
   const shelves: Array<{ label: string; stories: Story[] }> = []
   const order = [
     ...locs.filter(l => cityLikeLabel(l)).map(c => `My City · ${c}`),
-    ...locs.filter(l => ['Maharashtra', 'Tamil Nadu', 'Karnataka', 'Telangana', 'Gujarat', 'Rajasthan'].includes(l)),
+    ...locs.filter(l => (STATES as readonly string[]).includes(l)),
     ...['India', 'World'].filter(l => locs.includes(l)),
     'Editorials',
     ...topics,
   ]
 
+  const reserveAll = (stories: Story[]) => {
+    for (const story of stories) {
+      const words = headlineDedupeKey(story.headline)
+      const path = urlDedupeKey(story.url)
+      if (words) seen.add(words)
+      if (path) seen.add(path)
+    }
+  }
+
   for (const label of order) {
     const raw = byShelf.get(label)
     if (!raw?.length) continue
-    const clustered = cluster(raw)
-    const unique = clustered.filter(story => {
+    const clustered = cluster(raw).filter(
+      story => !hitsFollowedNarrowerPlace(story.headline, label, locs),
+    )
+    const place = placeLabelFromShelf(label)
+    const pool = cityLikeLabel(place)
+      ? clustered.filter(story => cityKeepsStory(story.headline, place, locs))
+      : clustered
+    const unique = pool.filter(story => {
       const words = headlineDedupeKey(story.headline)
       const path = urlDedupeKey(story.url)
       if ((words && seen.has(words)) || (path && seen.has(path))) return false
@@ -1226,6 +1231,9 @@ async function buildEdition(locations: string[], topics: string[]) {
     )
     const stories = pickStories(allowed, 12)
     if (stories.length) shelves.push({ label, stories })
+    if (cityLikeLabel(place) || (STATES as readonly string[]).includes(label) || label === 'India') {
+      reserveAll(pool)
+    }
   }
 
   await Promise.race([
@@ -1261,7 +1269,7 @@ async function buildEdition(locations: string[], topics: string[]) {
 }
 
 function cityLikeLabel(l: string) {
-  return ['Pune', 'Mumbai', 'Bengaluru', 'Chennai', 'Hyderabad', 'Delhi', 'Kolkata', 'Ahmedabad'].includes(l)
+  return (CITIES as readonly string[]).includes(l)
 }
 
 function pickStories(stories: Story[], limit = 16) {
@@ -1272,8 +1280,10 @@ function pickStories(stories: Story[], limit = 16) {
 
 function dedupeShelves(shelves: Array<{ label: string; stories: Story[] }>) {
   const seen = new Set<string>()
-  for (const shelf of shelves) {
-    shelf.stories = [...shelf.stories]
+  const kept = new Map<string, Story[]>()
+  const ranked = [...shelves].sort((a, b) => shelfGeoRank(a.label) - shelfGeoRank(b.label))
+  for (const shelf of ranked) {
+    const stories = [...shelf.stories]
       .sort((a, b) => Date.parse(b.publishedAt) - Date.parse(a.publishedAt))
       .filter(story => {
         const words = headlineDedupeKey(story.headline)
@@ -1283,6 +1293,10 @@ function dedupeShelves(shelves: Array<{ label: string; stories: Story[] }>) {
         if (path) seen.add(path)
         return true
       })
+    kept.set(shelf.label, stories)
+  }
+  for (const shelf of shelves) {
+    shelf.stories = kept.get(shelf.label) || []
   }
   for (let i = shelves.length - 1; i >= 0; i--) {
     if (!shelves[i].stories.length) shelves.splice(i, 1)
