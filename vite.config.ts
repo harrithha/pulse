@@ -11,7 +11,8 @@ export default defineConfig(({ mode }) => {
       react(),
       tailwindcss(),
       newsPlugin({
-        voice: env.TTS_VOICE || process.env.TTS_VOICE,
+        speechifyKey: env.SPEECHIFY_API_KEY || process.env.SPEECHIFY_API_KEY,
+        speechifyVoice: env.SPEECHIFY_VOICE_ID || process.env.SPEECHIFY_VOICE_ID,
       }),
     ],
     resolve: {

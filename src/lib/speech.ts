@@ -6,8 +6,9 @@ export type SpeechHandle = {
 
 export type TtsStatus = {
   ready: boolean
-  provider: 'edge' | 'browser'
+  provider: 'speechify' | 'browser'
   voice: string | null
+  gwyneth?: boolean
 }
 
 export function canSpeak() {
@@ -112,7 +113,7 @@ function textsKey(texts: string[]) {
   return texts.join('\u0001')
 }
 
-async function fetchTts(texts: string[], signal: AbortSignal) {
+async function fetchSpeechify(texts: string[], signal: AbortSignal) {
   const res = await fetch('/api/tts', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -131,7 +132,7 @@ function getSpeechBlob(texts: string[], signal: AbortSignal) {
   const key = textsKey(texts)
   const hit = ttsCache.get(key)
   if (hit) return hit
-  const work = fetchTts(texts, signal).then(
+  const work = fetchSpeechify(texts, signal).then(
     blob => {
       if (!blob) ttsCache.delete(key)
       return blob
@@ -216,8 +217,8 @@ function speakBrowser(
     const voice = preferredVoice()
     if (voice) utter.voice = voice
     utter.lang = voice?.lang || 'en-IN'
-    utter.rate = Math.min(1.15, Math.max(0.9, rate || 1.05))
-    utter.pitch = 1.05
+    utter.rate = 0.2
+    utter.pitch = 1.25
     utter.volume = 1
     utter.onend = () => {
       if (stopped) return
@@ -282,7 +283,7 @@ export function speakSections(
       let next = packed.length > 1 ? getSpeechBlob(packed[1], ctrl.signal) : null
       const first = await getSpeechBlob(packed[0], ctrl.signal)
       if (!first) {
-        browser = speakBrowser(sections, startIndex, rate, onIndex, finish)
+        finish()
         return
       }
       await playBlob(first, audio, ctrl.signal)
