@@ -583,15 +583,37 @@ function pageToArticle(html: string) {
 async function extractArticle(url: string) {
   const empty = { title: '', image: '', paragraphs: [] as string[] }
   const candidates = [...new Set([url, ...publisherFallbacks(url)])]
-  const pages = await Promise.all(candidates.map(candidate => fetchPage(candidate, 14000)))
-  let best = empty
-  for (const page of pages) {
-    if (!page) continue
-    const article = pageToArticle(page.html)
-    if (article.paragraphs.length >= 2) return article
-    if (article.paragraphs.length > best.paragraphs.length) best = article
+  if (candidates.length === 1) {
+    const page = await fetchPage(candidates[0], 8000)
+    return page ? pageToArticle(page.html) : empty
   }
-  return best
+  return new Promise<ReturnType<typeof pageToArticle>>(resolve => {
+    let pending = candidates.length
+    let best = empty
+    let done = false
+    const finish = (article: ReturnType<typeof pageToArticle>) => {
+      if (done) return
+      done = true
+      resolve(article)
+    }
+    for (const candidate of candidates) {
+      void fetchPage(candidate, 8000).then(page => {
+        if (done) return
+        pending -= 1
+        if (!page) {
+          if (pending === 0) finish(best)
+          return
+        }
+        const article = pageToArticle(page.html)
+        if (article.paragraphs.length >= 2) {
+          finish(article)
+          return
+        }
+        if (article.paragraphs.length > best.paragraphs.length) best = article
+        if (pending === 0) finish(best)
+      })
+    }
+  })
 }
 
 const articleCache = new Map<string, { at: number; body: string }>()

@@ -131,6 +131,18 @@ button, a, input {
   box-shadow: var(--card-shadow);
 }
 
+.news-fallback {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: var(--poster-fallback);
+  color: var(--amber);
+  object-fit: cover;
+}
+
 .nav-btn {
   align-items: center;
   justify-content: center;

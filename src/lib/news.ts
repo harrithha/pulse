@@ -5,10 +5,48 @@ type ArticleResult = { title?: string; image?: string; paragraphs: string[]; err
 
 const ARTICLE_TTL = 12 * 60 * 1000
 const EDITION_STORE = 'pulse-edition'
+const ARTICLE_STORE = 'pulse-article:'
 const EDITION_TTL = 6 * 60 * 60 * 1000
 const articleCache = new Map<string, { at: number; data: ArticleResult }>()
 const articleInflight = new Map<string, Promise<ArticleResult>>()
 const editionInflight = new Map<string, Promise<NewsPayload>>()
+
+function storyKey(story: { id?: string; url: string; publishers: { url: string }[] }) {
+  return story.id || story.url || story.publishers[0]?.url || ''
+}
+
+function readStoredArticle(key: string): { at: number; data: ArticleResult } | null {
+  try {
+    const raw = sessionStorage.getItem(ARTICLE_STORE + key)
+    if (!raw) return null
+    const row = JSON.parse(raw) as { at: number; data: ArticleResult }
+    if (!row?.data || Date.now() - row.at > ARTICLE_TTL) return null
+    return row
+  } catch {
+    return null
+  }
+}
+
+function writeStoredArticle(key: string, data: ArticleResult) {
+  try {
+    sessionStorage.setItem(ARTICLE_STORE + key, JSON.stringify({ at: Date.now(), data }))
+  } catch {
+    /* quota */
+  }
+}
+
+export function getCachedStoryArticle(story: { id?: string; url: string; publishers: { url: string }[] }): ArticleResult | null {
+  const key = storyKey(story)
+  if (!key) return null
+  const hit = articleCache.get(key)
+  if (hit && Date.now() - hit.at < ARTICLE_TTL) {
+    return { ...hit.data, paragraphs: cleanArticleParagraphs(hit.data.paragraphs || []) }
+  }
+  const stored = readStoredArticle(key)
+  if (!stored) return null
+  articleCache.set(key, stored)
+  return { ...stored.data, paragraphs: cleanArticleParagraphs(stored.data.paragraphs || []) }
+}
 
 function prefsKey(locations: string[], topics: string[]) {
   return `${[...locations].sort().join('|')}::${[...topics].sort().join('|')}`
@@ -84,10 +122,6 @@ export async function loadArticle(url: string, signal?: AbortSignal) {
   return (await res.json()) as ArticleResult
 }
 
-function storyKey(story: { id?: string; url: string; publishers: { url: string }[] }) {
-  return story.id || story.url || story.publishers[0]?.url || ''
-}
-
 async function fetchBestArticle(story: { url: string; publishers: { url: string }[] }): Promise<ArticleResult> {
   const google = /news\.google\.com/i
   const urls = [...story.publishers.map(p => p.url), story.url].filter(Boolean)
@@ -128,16 +162,17 @@ async function fetchBestArticle(story: { url: string; publishers: { url: string 
 export function prefetchStoryArticle(story: { id?: string; url: string; publishers: { url: string }[] }): Promise<ArticleResult> {
   const key = storyKey(story)
   if (!key) return Promise.resolve({ paragraphs: [] })
-  const hit = articleCache.get(key)
-  if (hit && Date.now() - hit.at < ARTICLE_TTL) {
-    return Promise.resolve({ ...hit.data, paragraphs: cleanArticleParagraphs(hit.data.paragraphs || []) })
-  }
+  const cached = getCachedStoryArticle(story)
+  if (cached?.paragraphs?.length) return Promise.resolve(cached)
   const inflight = articleInflight.get(key)
   if (inflight) return inflight
   const work = fetchBestArticle(story)
     .then(data => {
       const cleaned = { ...data, paragraphs: cleanArticleParagraphs(data.paragraphs || []) }
-      if (cleaned.paragraphs?.length) articleCache.set(key, { at: Date.now(), data: cleaned })
+      if (cleaned.paragraphs?.length) {
+        articleCache.set(key, { at: Date.now(), data: cleaned })
+        writeStoredArticle(key, cleaned)
+      }
       return cleaned
     })
     .finally(() => articleInflight.delete(key))

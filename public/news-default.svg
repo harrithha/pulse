@@ -1,52 +1,13 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 360" preserveAspectRatio="xMidYMid slice">
   <defs>
-    <linearGradient id="sky" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0%" stop-color="#2A1C12"/>
-      <stop offset="42%" stop-color="#1A1520"/>
-      <stop offset="100%" stop-color="#0E0E16"/>
-    </linearGradient>
-    <linearGradient id="glow" x1="0.2" y1="0" x2="0.8" y2="1">
-      <stop offset="0%" stop-color="#EA580C" stop-opacity="0.45"/>
-      <stop offset="100%" stop-color="#EA580C" stop-opacity="0"/>
+    <linearGradient id="paper" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#F3E4D4"/>
+      <stop offset="58%" stop-color="#EFE9E1"/>
+      <stop offset="100%" stop-color="#E7DFD4"/>
     </linearGradient>
   </defs>
-  <rect width="640" height="360" fill="url(#sky)"/>
-  <circle cx="520" cy="70" r="120" fill="url(#glow)"/>
-  <g fill="#0A0A10" opacity="0.55">
-    <rect x="0" y="248" width="70" height="112"/>
-    <rect x="78" y="210" width="54" height="150"/>
-    <rect x="140" y="228" width="88" height="132"/>
-    <rect x="236" y="190" width="62" height="170"/>
-    <rect x="306" y="236" width="96" height="124"/>
-    <rect x="410" y="204" width="70" height="156"/>
-    <rect x="488" y="176" width="52" height="184"/>
-    <rect x="548" y="222" width="92" height="138"/>
+  <rect width="640" height="360" fill="url(#paper)"/>
+  <g fill="none" stroke="#C2410C" stroke-width="8" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M160 196h72L272 96l56 176 48-112h72l28-56 40 88h84"/>
   </g>
-  <g fill="#14141F" opacity="0.9">
-    <rect x="18" y="268" width="44" height="92"/>
-    <rect x="98" y="232" width="28" height="128"/>
-    <rect x="168" y="250" width="48" height="110"/>
-    <rect x="252" y="214" width="32" height="146"/>
-    <rect x="330" y="258" width="54" height="102"/>
-    <rect x="428" y="226" width="36" height="134"/>
-    <rect x="502" y="198" width="26" height="162"/>
-    <rect x="572" y="244" width="50" height="116"/>
-  </g>
-  <rect x="72" y="86" width="280" height="168" rx="10" fill="#F4EDE4"/>
-  <rect x="88" y="102" width="92" height="64" rx="4" fill="#EA580C"/>
-  <rect x="192" y="106" width="140" height="8" rx="4" fill="#1C1917"/>
-  <rect x="192" y="122" width="118" height="6" rx="3" fill="#8A837A"/>
-  <rect x="192" y="136" width="132" height="6" rx="3" fill="#C4B9A8"/>
-  <rect x="192" y="150" width="96" height="6" rx="3" fill="#C4B9A8"/>
-  <rect x="88" y="180" width="244" height="5" rx="2.5" fill="#D6CFC4"/>
-  <rect x="88" y="194" width="228" height="5" rx="2.5" fill="#D6CFC4"/>
-  <rect x="88" y="208" width="200" height="5" rx="2.5" fill="#D6CFC4"/>
-  <rect x="88" y="222" width="160" height="5" rx="2.5" fill="#D6CFC4"/>
-  <g transform="translate(430 118)">
-    <rect width="44" height="44" rx="12" fill="#EA580C"/>
-    <path d="M7 22.5h7.6L16.8 10.4 22.8 33.6 26.4 22.5H35" fill="none" stroke="#FFF7F2" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
-    <circle cx="36.6" cy="22.5" r="2.1" fill="#FFF7F2"/>
-  </g>
-  <text x="430" y="186" fill="#F5A623" font-family="Outfit, system-ui, sans-serif" font-size="13" font-weight="600" letter-spacing="4">PULSE</text>
-  <text x="430" y="208" fill="#EEE8E0" font-family="Outfit, system-ui, sans-serif" font-size="18" font-weight="500">Todays news</text>
 </svg>

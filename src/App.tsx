@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
-import { emptyEdition, loadEdition, prefetchStoryArticle, readCachedEdition } from './lib/news'
+import { emptyEdition, getCachedStoryArticle, loadEdition, prefetchStoryArticle, readCachedEdition } from './lib/news'
 import { cleanArticleParagraphs } from './lib/articleText'
 import { detectHomePlace } from './lib/location'
 import {
@@ -207,7 +207,27 @@ function MoonIcon() {
   )
 }
 
-const DEFAULT_NEWS_IMAGE = '/news-default.svg'
+function usableCover(src?: string) {
+  const url = src?.trim() || ''
+  if (!/^https?:\/\//i.test(url)) return false
+  return !/1x1|pixel|spacer|blank\.(gif|png)|placeholder|no[-_]?image|missing/i.test(url)
+}
+
+function CoverFallback({ className }: { className?: string }) {
+  return (
+    <div className={`news-fallback ${className || ''}`} aria-hidden>
+      <svg width="56" height="32" viewBox="0 0 56 32" fill="none">
+        <path
+          d="M3 18h7.5L14.5 6l6 20 5.5-14H35l3-7 4.5 11H53"
+          stroke="currentColor"
+          strokeWidth="2.2"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
+      </svg>
+    </div>
+  )
+}
 
 function CoverImage({
   src,
@@ -220,16 +240,14 @@ function CoverImage({
   useEffect(() => {
     setFailed(false)
   }, [src])
-  const url = src && !failed ? src : DEFAULT_NEWS_IMAGE
+  if (!usableCover(src) || failed) return <CoverFallback className={className} />
   return (
     <img
-      src={url}
+      src={src}
       alt=""
       referrerPolicy="no-referrer"
       className={className}
-      onError={() => {
-        if (url !== DEFAULT_NEWS_IMAGE) setFailed(true)
-      }}
+      onError={() => setFailed(true)}
     />
   )
 }
@@ -459,8 +477,26 @@ function PosterCard({
   layout?: 'rail' | 'grid'
 }) {
   const rail = layout === 'rail'
+  const node = useRef<HTMLButtonElement>(null)
+  const prefetch = useRef(onPrefetch)
+  prefetch.current = onPrefetch
+  useEffect(() => {
+    const el = node.current
+    if (!el || !prefetch.current) return
+    const io = new IntersectionObserver(
+      entries => {
+        if (!entries.some(entry => entry.isIntersecting)) return
+        prefetch.current?.()
+        io.disconnect()
+      },
+      { rootMargin: '280px' },
+    )
+    io.observe(el)
+    return () => io.disconnect()
+  }, [story.id])
   return (
     <button
+      ref={node}
       onClick={onClick}
       onPointerDown={onPrefetch}
       onFocus={onPrefetch}
@@ -715,9 +751,12 @@ function HomePage({
 function StoryPage({ story, onBack }: { story: StoryCard; onBack: () => void }) {
   const links = sourceLinks(story)
   const readUrl = primaryReadUrl(story)
-  const [paragraphs, setParagraphs] = useState<string[]>(story.body?.length ? story.body : [])
-  const [heroImage, setHeroImage] = useState(story.image)
-  const [loadingArticle, setLoadingArticle] = useState(false)
+  const cached = getCachedStoryArticle(story)
+  const [paragraphs, setParagraphs] = useState<string[]>(
+    cached?.paragraphs?.length ? cached.paragraphs : story.body?.length ? story.body : [],
+  )
+  const [heroImage, setHeroImage] = useState(cached?.image || story.image)
+  const [loadingArticle, setLoadingArticle] = useState(!cached?.paragraphs?.length)
   const [articleError, setArticleError] = useState<string | null>(null)
   const [listening, setListening] = useState(false)
   const [listenBusy, setListenBusy] = useState(false)
@@ -727,15 +766,18 @@ function StoryPage({ story, onBack }: { story: StoryCard; onBack: () => void }) 
     speech.current?.stop()
     setListening(false)
     setListenBusy(false)
-    setParagraphs(story.body?.length ? story.body : [])
-    setHeroImage(story.image)
+    const fresh = getCachedStoryArticle(story)
+    setParagraphs(fresh?.paragraphs?.length ? fresh.paragraphs : story.body?.length ? story.body : [])
+    setHeroImage(fresh?.image || story.image)
     setArticleError(null)
+    setLoadingArticle(!fresh?.paragraphs?.length)
     return () => speech.current?.stop()
   }, [story.id, story.body, story.image])
 
   useEffect(() => {
     let live = true
-    setLoadingArticle(true)
+    const ready = getCachedStoryArticle(story)
+    if (!ready?.paragraphs?.length) setLoadingArticle(true)
     setArticleError(null)
     prefetchStoryArticle(story)
       .then(data => {
@@ -820,7 +862,9 @@ function StoryPage({ story, onBack }: { story: StoryCard; onBack: () => void }) 
         {listenBusy ? 'Starting…' : listening ? 'Stop' : 'Listen'}
       </button>
       <div className="mb-10">
-        {loadingArticle && <p className="text-sm mb-4" style={{ color: 'var(--muted)' }}>Loading the original article…</p>}
+        {loadingArticle && !body.length && (
+          <p className="text-sm mb-4" style={{ color: 'var(--muted)' }}>Loading the original article…</p>
+        )}
         {articleError && !paragraphs.length && (
           <p className="text-sm mb-4" style={{ color: 'var(--error-text)' }}>{articleError}</p>
         )}
