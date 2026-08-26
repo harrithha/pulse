@@ -26,6 +26,13 @@
   --shadow: 0 16px 40px rgba(0, 0, 0, 0.28);
   --hero: linear-gradient(145deg, #1e1a16 0%, #16161f 52%, #12121a 100%);
   --poster-fallback: linear-gradient(160deg, #2a1e10 0%, #141424 58%, #0e0e18 100%);
+  --fallback-sky-a: #2a1c12;
+  --fallback-sky-b: #1a1520;
+  --fallback-sky-c: #0e0e16;
+  --fallback-city: #0a0a10;
+  --fallback-paper: #f4ede4;
+  --fallback-ink: #1c1917;
+  --fallback-rule: #c4b9a8;
   --poster-wash: linear-gradient(to top, rgba(7, 7, 12, 0.75), transparent 55%);
   --error-bg: rgba(138, 59, 50, 0.18);
   --error-text: #e8b4ae;
@@ -56,7 +63,14 @@ html[data-theme='light'] {
   --card-shadow: 0 1px 2px rgba(28, 25, 23, 0.06), 0 10px 28px rgba(28, 25, 23, 0.1);
   --shadow: 0 14px 36px rgba(28, 25, 23, 0.1);
   --hero: linear-gradient(145deg, #fffaf4 0%, #f7f1ea 48%, #efe6da 100%);
-  --poster-fallback: linear-gradient(160deg, #f3e4d4 0%, #efe9e1 58%, #e7dfd4 100%);
+  --poster-fallback: linear-gradient(160deg, #e8c9a8 0%, #f0dcc8 48%, #d9b896 100%);
+  --fallback-sky-a: #e4b78c;
+  --fallback-sky-b: #f0d3b5;
+  --fallback-sky-c: #d7b08a;
+  --fallback-city: #c4966e;
+  --fallback-paper: #fffaf4;
+  --fallback-ink: #1c1917;
+  --fallback-rule: #d6cfc4;
   --poster-wash: linear-gradient(to top, rgba(233, 226, 216, 0.82), transparent 55%);
   --error-bg: rgba(185, 28, 28, 0.08);
   --error-text: #9f1239;
@@ -132,15 +146,17 @@ button, a, input {
 }
 
 .news-fallback {
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  display: block;
   width: 100%;
   height: 100%;
   overflow: hidden;
   background: var(--poster-fallback);
-  color: var(--amber);
   object-fit: cover;
+}
+.news-fallback svg {
+  display: block;
+  width: 100%;
+  height: 100%;
 }
 
 .nav-btn {

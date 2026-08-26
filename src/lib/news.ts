@@ -1,4 +1,5 @@
 import type { NewsPayload } from '../types'
+import { isFullArticle } from './articleExtract'
 import { cleanArticleParagraphs } from './articleText'
 
 type ArticleResult = { title?: string; image?: string; paragraphs: string[]; error?: string }
@@ -141,7 +142,7 @@ async function fetchBestArticle(story: { url: string; publishers: { url: string 
     for (const url of ordered) {
       loadArticle(url)
         .then(data => {
-          if ((data.paragraphs?.length || 0) >= 2) {
+          if (isFullArticle(data.paragraphs || [], '')) {
             finish(data)
             return
           }
@@ -159,17 +160,22 @@ async function fetchBestArticle(story: { url: string; publishers: { url: string 
   })
 }
 
-export function prefetchStoryArticle(story: { id?: string; url: string; publishers: { url: string }[] }): Promise<ArticleResult> {
+export function prefetchStoryArticle(
+  story: { id?: string; url: string; publishers: { url: string }[]; summary?: string },
+  opts?: { force?: boolean },
+): Promise<ArticleResult> {
   const key = storyKey(story)
   if (!key) return Promise.resolve({ paragraphs: [] })
-  const cached = getCachedStoryArticle(story)
-  if (cached?.paragraphs?.length) return Promise.resolve(cached)
-  const inflight = articleInflight.get(key)
-  if (inflight) return inflight
+  if (!opts?.force) {
+    const cached = getCachedStoryArticle(story)
+    if (cached && isFullArticle(cached.paragraphs, story.summary || '')) return Promise.resolve(cached)
+    const inflight = articleInflight.get(key)
+    if (inflight) return inflight
+  }
   const work = fetchBestArticle(story)
     .then(data => {
       const cleaned = { ...data, paragraphs: cleanArticleParagraphs(data.paragraphs || []) }
-      if (cleaned.paragraphs?.length) {
+      if (isFullArticle(cleaned.paragraphs, story.summary || '')) {
         articleCache.set(key, { at: Date.now(), data: cleaned })
         writeStoredArticle(key, cleaned)
       }

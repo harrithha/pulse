@@ -1,6 +1,7 @@
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { Plugin, PreviewServer, ViteDevServer } from 'vite'
 import { handleTts, type TtsOptions } from './pulse-tts.js'
+import { ampHtmlHref, isFullArticle, publisherAltUrls, splitArticleBody } from './src/lib/articleExtract.js'
 import { cleanArticleParagraphs, isJunkParagraph } from './src/lib/articleText.js'
 
 const UA =
@@ -438,22 +439,7 @@ function decodeGoogleNewsUrl(url: string) {
 }
 
 function publisherFallbacks(url: string) {
-  try {
-    const u = new URL(url)
-    const host = u.hostname.replace(/^www\./, '')
-    const path = u.pathname.replace(/\/+$/, '')
-    if (host === 'ndtv.com' || host.endsWith('.ndtv.com')) {
-      if (/\/amp(?:\/|$)/i.test(path)) return []
-      return [`${u.origin}${path}/amp/1`]
-    }
-    if (host === 'indianexpress.com' || host.endsWith('.indianexpress.com')) {
-      if (u.searchParams.get('outputType') === 'amp') return []
-      return [`${u.origin}${path}?outputType=amp`]
-    }
-  } catch {
-    /* ignore */
-  }
-  return []
+  return publisherAltUrls(url)
 }
 
 async function resolveArticleUrl(url: string) {
@@ -509,11 +495,8 @@ function metaContent(html: string, prop: string) {
 }
 
 function bodyToParagraphs(body: string): string[] {
-  const paras = body
-    .split(/\n+/)
-    .map(p => p.replace(/\s+/g, ' ').trim())
-    .filter(p => p.length > 70)
-  if (paras.length) return paras.slice(0, 40)
+  const split = splitArticleBody(body)
+  if (split.length) return split
   return htmlParagraphs(`<p>${body}</p>`)
 }
 
@@ -587,38 +570,52 @@ function pageToArticle(html: string) {
 
 async function extractArticle(url: string) {
   const empty = { title: '', image: '', paragraphs: [] as string[] }
-  const candidates = [...new Set([url, ...publisherFallbacks(url)])]
+  const seen = new Set<string>()
+  const queue: string[] = []
+  const add = (href?: string) => {
+    if (!href) return
+    let abs = href.split('#')[0]
+    try {
+      abs = new URL(abs, url).href
+    } catch {
+      return
+    }
+    if (seen.has(abs)) return
+    if (!allowedHost(abs) && abs !== url) return
+    seen.add(abs)
+    queue.push(abs)
+  }
+  add(url)
+  publisherFallbacks(url).forEach(add)
+
   let best = empty
-  await new Promise<void>(resolve => {
-    let pending = candidates.length
-    let settled = false
-    const finish = () => {
-      if (settled) return
-      settled = true
-      resolve()
+  while (queue.length) {
+    const batch = queue.splice(0, queue.length)
+    const rows = await Promise.all(
+      batch.map(async candidate => {
+        const page = await fetchPage(candidate, 20000)
+        if (!page) return null
+        return {
+          article: pageToArticle(page.html),
+          amp: ampHtmlHref(page.html, page.url),
+        }
+      }),
+    )
+    for (const row of rows) {
+      if (!row) continue
+      if (row.article.paragraphs.length > best.paragraphs.length) best = row.article
+      add(row.amp)
     }
-    for (const candidate of candidates) {
-      void fetchPage(candidate, 20000)
-        .then(page => {
-          if (settled) return
-          pending -= 1
-          if (page) {
-            const article = pageToArticle(page.html)
-            if (article.paragraphs.length >= 2) {
-              best = article
-              finish()
-              return
-            }
-            if (article.paragraphs.length > best.paragraphs.length) best = article
-          }
-          if (pending === 0) finish()
-        })
-        .catch(() => {
-          pending -= 1
-          if (pending === 0) finish()
-        })
+    if (isFullArticle(best.paragraphs)) return best
+  }
+
+  if (!isFullArticle(best.paragraphs)) {
+    const page = await fetchPage(url, 25000)
+    if (page) {
+      const article = pageToArticle(page.html)
+      if (article.paragraphs.length > best.paragraphs.length) best = article
     }
-  })
+  }
   return best
 }
 
@@ -646,8 +643,12 @@ async function loadArticleBody(raw: string) {
       return ready
     }
     const article = await extractArticle(target)
-    const body = JSON.stringify(article)
-    if (article.paragraphs.length) {
+    const body = JSON.stringify(
+      isFullArticle(article.paragraphs)
+        ? article
+        : { ...article, error: article.paragraphs.length ? undefined : 'Could not extract the full article text from the publisher page.' },
+    )
+    if (isFullArticle(article.paragraphs)) {
       const row = { at: Date.now(), body }
       articleCache.set(raw, row)
       articleCache.set(target, row)

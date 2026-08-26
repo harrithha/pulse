@@ -1,5 +1,6 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { useEffect, useId, useRef, useState, type ReactNode } from 'react'
 import { emptyEdition, getCachedStoryArticle, loadEdition, prefetchStoryArticle, readCachedEdition } from './lib/news'
+import { isFullArticle } from './lib/articleExtract'
 import { cleanArticleParagraphs } from './lib/articleText'
 import { detectHomePlace } from './lib/location'
 import {
@@ -213,17 +214,84 @@ function usableCover(src?: string) {
   return !/1x1|pixel|spacer|blank\.(gif|png)|placeholder|no[-_]?image|missing/i.test(url)
 }
 
-function CoverFallback({ className }: { className?: string }) {
+function sourceMark(name?: string) {
+  const n = (name || '').toLowerCase()
+  if (/economic times/.test(n)) return 'ET'
+  if (/times of india|\btoi\b/.test(n)) return 'TOI'
+  if (/\bndtv\b/.test(n)) return 'NDTV'
+  if (/indian express/.test(n)) return 'IE'
+  if (/\bmint\b|livemint/.test(n)) return 'MINT'
+  if (/\bcnbc/.test(n)) return 'CNBC'
+  const parts = (name || 'Pulse').split(/[\s./-]+/).filter(Boolean)
+  if (parts.length >= 2) return `${parts[0][0]}${parts[1][0]}`.toUpperCase()
+  return (name || 'PULSE').replace(/[^A-Za-z]/g, '').slice(0, 4).toUpperCase() || 'PULSE'
+}
+
+function CoverFallback({ className, source }: { className?: string; source?: string }) {
+  const uid = useId().replace(/:/g, '')
+  const mark = sourceMark(source)
+  const markSize = mark.length > 3 ? 28 : mark.length === 3 ? 34 : 42
   return (
     <div className={`news-fallback ${className || ''}`} aria-hidden>
-      <svg width="56" height="32" viewBox="0 0 56 32" fill="none">
-        <path
-          d="M3 18h7.5L14.5 6l6 20 5.5-14H35l3-7 4.5 11H53"
-          stroke="currentColor"
-          strokeWidth="2.2"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-        />
+      <svg viewBox="0 0 640 360" preserveAspectRatio="xMidYMid slice" className="w-full h-full">
+        <defs>
+          <linearGradient id={`sky-${uid}`} x1="0" y1="0" x2="1" y2="1">
+            <stop offset="0%" stopColor="var(--fallback-sky-a)" />
+            <stop offset="55%" stopColor="var(--fallback-sky-b)" />
+            <stop offset="100%" stopColor="var(--fallback-sky-c)" />
+          </linearGradient>
+          <linearGradient id={`glow-${uid}`} x1="0.2" y1="0" x2="0.9" y2="1">
+            <stop offset="0%" stopColor="var(--orange)" stopOpacity="0.38" />
+            <stop offset="100%" stopColor="var(--orange)" stopOpacity="0" />
+          </linearGradient>
+        </defs>
+        <rect width="640" height="360" fill={`url(#sky-${uid})`} />
+        <circle cx="530" cy="64" r="150" fill={`url(#glow-${uid})`} />
+        <g fill="var(--fallback-city)" opacity="0.55">
+          <rect x="0" y="248" width="70" height="112" />
+          <rect x="78" y="214" width="52" height="146" />
+          <rect x="140" y="232" width="84" height="128" />
+          <rect x="234" y="198" width="58" height="162" />
+          <rect x="302" y="240" width="92" height="120" />
+          <rect x="404" y="210" width="66" height="150" />
+          <rect x="480" y="184" width="50" height="176" />
+          <rect x="540" y="226" width="100" height="134" />
+        </g>
+        <rect x="48" y="52" width="318" height="214" rx="18" fill="var(--fallback-paper)" />
+        <rect x="68" y="72" width="118" height="86" rx="8" fill="var(--orange)" />
+        <path d="M86 132h28l12-22 14 38 10-18h28" fill="none" stroke="#FFF7F2" strokeWidth="4" strokeLinecap="round" strokeLinejoin="round" />
+        <rect x="204" y="80" width="138" height="10" rx="5" fill="var(--fallback-ink)" />
+        <rect x="204" y="100" width="112" height="7" rx="3.5" fill="var(--fallback-rule)" />
+        <rect x="204" y="116" width="128" height="7" rx="3.5" fill="var(--fallback-rule)" />
+        <rect x="204" y="132" width="96" height="7" rx="3.5" fill="var(--fallback-rule)" />
+        <rect x="68" y="176" width="274" height="6" rx="3" fill="var(--fallback-rule)" />
+        <rect x="68" y="192" width="252" height="6" rx="3" fill="var(--fallback-rule)" />
+        <rect x="68" y="208" width="228" height="6" rx="3" fill="var(--fallback-rule)" />
+        <rect x="68" y="224" width="176" height="6" rx="3" fill="var(--fallback-rule)" />
+        <rect x="408" y="118" width="168" height="92" rx="22" fill="var(--orange)" />
+        <text
+          x="492"
+          y="176"
+          textAnchor="middle"
+          fill="#FFF7F2"
+          fontFamily="Outfit, system-ui, sans-serif"
+          fontSize={markSize}
+          fontWeight="700"
+        >
+          {mark}
+        </text>
+        <text
+          x="492"
+          y="236"
+          textAnchor="middle"
+          fill="var(--amber)"
+          fontFamily="Outfit, system-ui, sans-serif"
+          fontSize="13"
+          fontWeight="600"
+          letterSpacing="4"
+        >
+          PULSE
+        </text>
       </svg>
     </div>
   )
@@ -232,15 +300,17 @@ function CoverFallback({ className }: { className?: string }) {
 function CoverImage({
   src,
   className,
+  source,
 }: {
   src?: string
   className?: string
+  source?: string
 }) {
   const [failed, setFailed] = useState(false)
   useEffect(() => {
     setFailed(false)
   }, [src])
-  if (!usableCover(src) || failed) return <CoverFallback className={className} />
+  if (!usableCover(src) || failed) return <CoverFallback className={className} source={source} />
   return (
     <img
       src={src}
@@ -512,6 +582,7 @@ function PosterCard({
       >
         <CoverImage
           src={story.image}
+          source={sourceName(story)}
           className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-105"
         />
         <div className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity" style={{ background: 'var(--poster-wash)' }} />
@@ -752,12 +823,14 @@ function StoryPage({ story, onBack }: { story: StoryCard; onBack: () => void }) 
   const links = sourceLinks(story)
   const readUrl = primaryReadUrl(story)
   const cached = getCachedStoryArticle(story)
+  const cachedFull = isFullArticle(cached?.paragraphs || [], story.summary)
   const [paragraphs, setParagraphs] = useState<string[]>(
-    cached?.paragraphs?.length ? cached.paragraphs : story.body?.length ? story.body : [],
+    cachedFull && cached?.paragraphs?.length ? cached.paragraphs : story.body?.length ? story.body : [],
   )
   const [heroImage, setHeroImage] = useState(cached?.image || story.image)
-  const [loadingArticle, setLoadingArticle] = useState(!cached?.paragraphs?.length)
+  const [loadingArticle, setLoadingArticle] = useState(!cachedFull)
   const [articleError, setArticleError] = useState<string | null>(null)
+  const [retryNonce, setRetryNonce] = useState(0)
   const [listening, setListening] = useState(false)
   const [listenBusy, setListenBusy] = useState(false)
   const speech = useRef<SpeechHandle | null>(null)
@@ -767,24 +840,30 @@ function StoryPage({ story, onBack }: { story: StoryCard; onBack: () => void }) 
     setListening(false)
     setListenBusy(false)
     const fresh = getCachedStoryArticle(story)
-    setParagraphs(fresh?.paragraphs?.length ? fresh.paragraphs : story.body?.length ? story.body : [])
+    const full = isFullArticle(fresh?.paragraphs || [], story.summary)
+    setParagraphs(full && fresh?.paragraphs?.length ? fresh.paragraphs : story.body?.length ? story.body : [])
     setHeroImage(fresh?.image || story.image)
     setArticleError(null)
-    setLoadingArticle(!fresh?.paragraphs?.length)
+    setLoadingArticle(!full)
     return () => speech.current?.stop()
   }, [story.id, story.body, story.image])
 
   useEffect(() => {
     let live = true
     const ready = getCachedStoryArticle(story)
-    if (!ready?.paragraphs?.length) setLoadingArticle(true)
+    const full = retryNonce === 0 && isFullArticle(ready?.paragraphs || [], story.summary)
+    if (!full) setLoadingArticle(true)
     setArticleError(null)
-    prefetchStoryArticle(story)
+    prefetchStoryArticle(story, { force: retryNonce > 0 })
       .then(data => {
         if (!live) return
-        if (data.paragraphs?.length) setParagraphs(cleanArticleParagraphs(data.paragraphs))
-        else if (!story.whatHappened.length && !story.summary) {
+        if (isFullArticle(data.paragraphs || [], story.summary)) {
+          setParagraphs(cleanArticleParagraphs(data.paragraphs))
+          setArticleError(null)
+        } else if (!story.whatHappened.length && !story.summary) {
           setArticleError(data.error || 'Could not extract the full article text from the publisher page.')
+        } else {
+          setArticleError('Could not load the full article from the publisher. Retry, or open the source.')
         }
         if (data.image) setHeroImage(data.image)
       })
@@ -798,7 +877,7 @@ function StoryPage({ story, onBack }: { story: StoryCard; onBack: () => void }) 
     return () => {
       live = false
     }
-  }, [story.id])
+  }, [story.id, retryNonce])
 
   const rawBody = paragraphs.length ? paragraphs : story.whatHappened.length ? story.whatHappened : [story.summary]
   const cleanedBody = cleanArticleParagraphs(rawBody)
@@ -838,7 +917,7 @@ function StoryPage({ story, onBack }: { story: StoryCard; onBack: () => void }) 
       <button onClick={onBack} className="flex items-center gap-1 text-sm mb-6 sm:mb-8 min-h-10" style={{ color: 'var(--dim)' }}>
         <ChevronLeft /> Back
       </button>
-      <CoverImage src={heroImage} className="w-full h-48 sm:h-64 md:h-72 object-cover rounded-2xl mb-6 sm:mb-8" />
+      <CoverImage src={heroImage} source={sourceName(story)} className="w-full h-48 sm:h-64 md:h-72 object-cover rounded-2xl mb-6 sm:mb-8" />
       <div className="flex flex-wrap items-center gap-2 text-[12px] mb-4" style={{ color: 'var(--dim)' }}>
         <span style={{ color: 'var(--amber)' }}>{sourceName(story)}</span>
         <span>·</span>
@@ -865,8 +944,13 @@ function StoryPage({ story, onBack }: { story: StoryCard; onBack: () => void }) 
         {loadingArticle && !body.length && (
           <p className="text-sm mb-4" style={{ color: 'var(--muted)' }}>Loading the original article…</p>
         )}
-        {articleError && !paragraphs.length && (
-          <p className="text-sm mb-4" style={{ color: 'var(--error-text)' }}>{articleError}</p>
+        {articleError && (
+          <p className="text-sm mb-4" style={{ color: 'var(--error-text)' }}>
+            {articleError}{' '}
+            <button type="button" className="font-semibold underline-offset-2 hover:underline" onClick={() => setRetryNonce(n => n + 1)} style={{ color: 'var(--amber)' }}>
+              Retry
+            </button>
+          </p>
         )}
         <div className="space-y-5">
           {body.map((p, i) => (
