@@ -425,7 +425,7 @@ function SiteHeader({
   const locTitle = homePlaceLabel(home) || locLabel
   return (
     <header className="sticky top-0 z-50 pulse-header">
-      <div className="px-3 sm:px-5 md:px-10 h-14 md:h-16 flex items-center gap-2 sm:gap-3">
+      <div className="px-3 sm:px-5 md:px-10 h-14 md:h-16 flex items-center gap-2 sm:gap-3 flex-nowrap overflow-hidden">
         {editing ? (
           <button
             type="button"
@@ -435,13 +435,13 @@ function SiteHeader({
             aria-label="Back"
           >
             <ChevronLeft />
-            Back
+            <span className="hidden min-[400px]:inline">Back</span>
           </button>
         ) : null}
         <button onClick={() => onNavigate('home')} className="shrink-0">
           <BrandMark size={24} />
         </button>
-        <div className="ml-auto flex items-center gap-1.5 sm:gap-2 min-w-0">
+        <div className="ml-auto flex items-center gap-1.5 sm:gap-2 min-w-0 flex-1 justify-end">
           <button
             type="button"
             onClick={() => onNavigate('profile')}
@@ -450,7 +450,7 @@ function SiteHeader({
             aria-label={`Location: ${locTitle}`}
           >
             <PinIcon />
-            <span className="min-w-0 truncate">
+            <span className="header-loc-label">
               {locLabel}
               {city && state ? (
                 <span className="hidden sm:inline" style={{ color: 'var(--muted)', fontWeight: 500 }}>
@@ -472,7 +472,8 @@ function SiteHeader({
             className="header-chip"
             style={{ color: 'var(--amber)' }}
           >
-            {refreshing ? 'Updating…' : 'Refresh'}
+            <span className="sm:hidden">{refreshing ? '…' : 'Refresh'}</span>
+            <span className="hidden sm:inline">{refreshing ? 'Updating…' : 'Refresh'}</span>
           </button>
           <button
             type="button"
