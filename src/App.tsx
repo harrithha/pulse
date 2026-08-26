@@ -331,23 +331,28 @@ function CoverImage({
   source?: string
 }) {
   const [failed, setFailed] = useState(false)
+  const [ready, setReady] = useState(false)
   useEffect(() => {
     setFailed(false)
+    setReady(false)
   }, [src])
   const showImg = usableCover(src) && !failed
   return (
     <div className={`news-cover relative overflow-hidden ${className || ''}`}>
+      <CoverFallback source={source} />
       {showImg ? (
         <img
           src={src}
           alt=""
           referrerPolicy="no-referrer"
-          className="absolute inset-0 block h-full w-full max-w-none object-cover object-center transition-transform duration-300 group-hover:scale-105"
+          className={`absolute inset-0 block h-full w-full max-w-none object-cover object-center group-hover:scale-105${ready ? ' is-ready' : ''}`}
+          onLoad={() => setReady(true)}
           onError={() => setFailed(true)}
+          ref={node => {
+            if (node?.complete && node.naturalWidth > 0) setReady(true)
+          }}
         />
-      ) : (
-        <CoverFallback source={source} />
-      )}
+      ) : null}
     </div>
   )
 }
@@ -419,7 +424,7 @@ function SiteHeader({
   refreshing: boolean
 }) {
   const editing = tab === 'profile'
-  const locLabel = home.city || 'World'
+  const locLabel = home.city ? home.city : detecting ? 'Detecting' : 'World'
   return (
     <header className="sticky top-0 z-50 pulse-header">
       <div className="px-3 sm:px-5 md:px-10 h-14 md:h-16 flex items-center gap-2 sm:gap-3 flex-nowrap overflow-hidden">
@@ -442,9 +447,10 @@ function SiteHeader({
           <button
             type="button"
             onClick={() => onNavigate('profile')}
-            className={`header-chip is-location ${editing ? 'is-active' : ''}`}
+            className={`header-chip is-location${editing ? ' is-active' : ''}${detecting && !home.city ? ' is-detecting' : ''}`}
             title={locLabel}
-            aria-label={`Location: ${locLabel}`}
+            aria-label={detecting && !home.city ? 'Detecting location' : `Location: ${locLabel}`}
+            aria-busy={detecting && !home.city}
           >
             <PinIcon />
             <span className="header-loc-label">{locLabel}</span>
@@ -505,10 +511,10 @@ function OnboardingLocation({
         <h1 className="font-serif text-[color:var(--ink)] text-[32px] sm:text-[42px] leading-tight mb-3">Where should we pull news from?</h1>
         <p className="text-sm sm:text-base mb-4" style={{ color: 'var(--muted)' }}>
           {detecting
-            ? 'Waiting for location permission…'
+            ? 'Finding your city. India and World news are up in the meantime.'
             : found
               ? `Your local rows stay on: ${found}. Add anywhere else you follow.`
-              : 'We’ll show World news until the browser has your location, or you pick a city.'}
+              : 'Location is off. Showing India and World news, or pick a city.'}
         </p>
         <button
           type="button"
@@ -651,24 +657,29 @@ function RowArrow({ dir, label, onClick }: { dir: 'left' | 'right'; label: strin
 function ShelfSkeleton({ title }: { title: string }) {
   return (
     <section className="mb-7 sm:mb-8" aria-hidden="true">
-      <div className="px-4 sm:px-2 md:px-3 mb-2 sm:mb-2.5">
-        <h2 className="text-[20px] md:text-[22px] font-semibold tracking-tight" style={{ color: 'var(--ink)' }}>{title}</h2>
+      <div className="px-4 sm:grid sm:grid-cols-[44px_minmax(0,1fr)_44px] lg:grid-cols-[52px_minmax(0,1fr)_52px] sm:px-2 md:px-3 mb-2 sm:mb-2.5 items-center">
+        <div className="hidden sm:block" />
+        <h2 className="sm:px-1 text-[20px] md:text-[22px] font-semibold tracking-tight" style={{ color: 'var(--ink)' }}>{title}</h2>
+        <div className="hidden sm:block" />
       </div>
-      <div className="flex gap-3 overflow-hidden px-4 sm:px-2 md:px-3">
-        {[0, 1, 2].map(i => (
-          <div
-            key={i}
-            className="shrink-0 w-[86%] sm:w-[240px] md:w-[272px] rounded-2xl overflow-hidden"
-            style={{ background: 'var(--surface)', border: '1px solid var(--card-border)' }}
-          >
-            <div className="h-[168px] sm:h-[150px] md:h-[168px]" style={{ background: 'var(--elevated)' }} />
-            <div className="p-3.5 space-y-2">
-              <div className="h-3 w-24 rounded" style={{ background: 'var(--elevated)' }} />
-              <div className="h-4 w-full rounded" style={{ background: 'var(--elevated)' }} />
-              <div className="h-4 w-2/3 rounded" style={{ background: 'var(--elevated)' }} />
+      <div className="sm:grid sm:grid-cols-[44px_minmax(0,1fr)_44px] lg:grid-cols-[52px_minmax(0,1fr)_52px] items-center sm:px-2 md:px-3">
+        <div className="hidden sm:block" />
+        <div className="row-scroll min-w-0">
+          {[0, 1, 2, 3, 4].map(i => (
+            <div
+              key={i}
+              className="news-card shrink-0 w-[86%] sm:w-[240px] md:w-[272px] rounded-2xl overflow-hidden snap-start"
+            >
+              <div className="pulse-skel-block h-[168px] sm:h-[150px] md:h-[168px]" />
+              <div className="p-3.5 space-y-2">
+                <div className="pulse-skel-block h-3 w-24 rounded" />
+                <div className="pulse-skel-block h-4 w-full rounded" />
+                <div className="pulse-skel-block h-4 w-2/3 rounded" />
+              </div>
             </div>
-          </div>
-        ))}
+          ))}
+        </div>
+        <div className="hidden sm:block" />
       </div>
     </section>
   )
@@ -737,12 +748,35 @@ function HomePage({
   const [audioOn, setAudioOn] = useState(false)
   const [audioBusy, setAudioBusy] = useState(false)
   const [query, setQuery] = useState('')
+  const [railsIn, setRailsIn] = useState(() => edition.shelves.length > 0)
+  const [skelOn, setSkelOn] = useState(() => edition.shelves.length === 0)
   const speech = useRef<SpeechHandle | null>(null)
   const rows = orderedShelves(edition.shelves, home, focus)
   const searching = Boolean(query.trim())
   const results = searching ? searchStories(edition, query, home, focus) : []
+  const revealed = useRef(edition.shelves.length > 0)
 
   useEffect(() => () => speech.current?.stop(), [])
+  useEffect(() => {
+    if (!rows.length) {
+      revealed.current = false
+      setRailsIn(false)
+      setSkelOn(true)
+      return
+    }
+    if (revealed.current) return
+    const frame = requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        revealed.current = true
+        setRailsIn(true)
+      })
+    })
+    const hide = window.setTimeout(() => setSkelOn(false), 780)
+    return () => {
+      cancelAnimationFrame(frame)
+      window.clearTimeout(hide)
+    }
+  }, [rows.length])
   useEffect(() => {
     const scripts = edition.brief.sections
       .map((s, i) => {
@@ -814,7 +848,7 @@ function HomePage({
             </div>
             <p className="text-sm mt-2" style={{ color: 'var(--muted)' }}>
               {loading && !rows.length
-                ? 'Loading World news…'
+                ? 'Loading India and World news…'
                 : `${edition.brief.storyCount || 0} stories · ${edition.brief.minutes || 2} min listen.`}
             </p>
             {error && (
@@ -859,23 +893,25 @@ function HomePage({
           )}
         </div>
       ) : (
-        <div className="mt-5">
-          {rows.map(shelf => (
-            <ShelfRow
-              key={shelf.label}
-              title={shelfTitle(shelf.label)}
-              stories={shelf.stories}
-              onOpen={onStoryTap}
-            />
-          ))}
-          {loading && !rows.length && (
-            <>
+        <div className="home-rails mt-5">
+          <div className={`home-rails-real${railsIn ? ' is-in' : ''}`}>
+            {rows.map(shelf => (
+              <ShelfRow
+                key={shelf.label}
+                title={shelfTitle(shelf.label)}
+                stories={shelf.stories}
+                onOpen={onStoryTap}
+              />
+            ))}
+            {!rows.length && !loading && (
+              <p className="px-4 sm:px-5 md:px-10 text-sm" style={{ color: 'var(--muted)' }}>No stories yet. Refresh the edition.</p>
+            )}
+          </div>
+          {skelOn && (
+            <div className={`home-rails-skel${rows.length ? ' is-covering' : ''}${railsIn ? ' is-out' : ''}`}>
               <ShelfSkeleton title="World" />
               <ShelfSkeleton title="India" />
-            </>
-          )}
-          {!rows.length && !loading && (
-            <p className="px-4 sm:px-5 md:px-10 text-sm" style={{ color: 'var(--muted)' }}>No stories yet. Refresh the edition.</p>
+            </div>
           )}
         </div>
       )}
@@ -1089,10 +1125,10 @@ function ProfilePage({
       <h1 className="font-serif text-[color:var(--ink)] text-[32px] sm:text-[40px] mb-2">Edit topics</h1>
       <p className="text-sm mb-3" style={{ color: 'var(--muted)' }}>
         {detecting
-          ? 'Waiting for location permission…'
+          ? 'Finding your city. India and World news are up in the meantime.'
           : found
             ? `${found} is your location. Tap chips to follow extra cities — that does not change it.`
-            : 'Showing World news until location is allowed. Tap a chip to follow a place.'}
+            : 'Location is off. Showing India and World news. Tap a chip to follow a place.'}
       </p>
       <button
         type="button"
