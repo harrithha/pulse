@@ -1,13 +1,20 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { emptyEdition, loadEdition, prefetchStoryArticle, readCachedEdition } from './lib/news'
 import { cleanArticleParagraphs } from './lib/articleText'
-import { readPrefs, readSession, writePrefs } from './lib/session'
+import { detectHomePlace } from './lib/location'
+import {
+  BROADER,
+  CITIES,
+  STATES,
+  TOPICS,
+  homePlaceLabel,
+  isLegacyDefaultLocations,
+  mergeHomeLocations,
+  type HomePlace,
+} from './lib/places'
+import { readPrefs, readSession, writePrefs, applyTheme, type ThemeName } from './lib/session'
 import { canSpeak, packScriptGroups, prefetchSpeech, speakSections, type SpeechHandle } from './lib/speech'
 import type { NewsPayload, Screen, Session, StoryCard, Tab } from './types'
-
-const CITIES = ['Pune', 'Mumbai', 'Bengaluru', 'Chennai', 'Hyderabad', 'Delhi', 'Kolkata', 'Ahmedabad']
-const STATES = ['Maharashtra', 'Tamil Nadu', 'Karnataka', 'Telangana', 'Gujarat', 'Rajasthan']
-const TOPICS = ['Technology', 'AI', 'Business', 'Startups', 'Sports', 'Entertainment', 'Science', 'Politics', 'Finance']
 
 function dayGreeting(at = new Date()) {
   const hour = at.getHours()
@@ -18,7 +25,7 @@ function dayGreeting(at = new Date()) {
 
 function liveBriefOpener(script: string) {
   if (!/^Good (morning|afternoon|evening)\b/i.test(script)) return script
-  return `${dayGreeting()}. Here is today's Pulse.`
+  return `${dayGreeting()}! Here's today's Pulse.`
 }
 
 function findStory(edition: NewsPayload, id: string) {
@@ -86,19 +93,29 @@ function storyListenScripts(story: StoryCard, paragraphs: string[]) {
   return parts.filter(p => p.trim()).map(script => ({ script }))
 }
 
-function orderedShelves(shelves: NewsPayload['shelves']) {
-  const citySet = new Set(CITIES)
-  const stateSet = new Set(STATES)
+function prefetchStoryListen(story: StoryCard, paragraphs: string[] = []) {
+  const packed = packScriptGroups(storyListenScripts(story, paragraphs).map(s => s.script))
+  if (packed[0]) prefetchSpeech(packed[0])
+  if (packed[1]) prefetchSpeech(packed[1])
+}
+
+function orderedShelves(shelves: NewsPayload['shelves'], home?: HomePlace) {
+  const citySet = new Set<string>(CITIES)
+  const stateSet = new Set<string>(STATES)
+  const homeCity: NewsPayload['shelves'] = []
   const cities: NewsPayload['shelves'] = []
+  const homeState: NewsPayload['shelves'] = []
   const states: NewsPayload['shelves'] = []
   const topics: NewsPayload['shelves'] = []
   for (const shelf of shelves) {
     const title = shelfTitle(shelf.label)
-    if (citySet.has(title)) cities.push(shelf)
+    if (home?.city && title === home.city) homeCity.push(shelf)
+    else if (citySet.has(title)) cities.push(shelf)
+    else if (home?.state && title === home.state) homeState.push(shelf)
     else if (stateSet.has(title)) states.push(shelf)
     else topics.push(shelf)
   }
-  return [...cities, ...states, ...topics]
+  return [...homeCity, ...cities, ...homeState, ...states, ...topics]
 }
 
 function NavChevron({ dir, size = 22 }: { dir: 'left' | 'right'; size?: number }) {
@@ -164,6 +181,59 @@ function SearchIcon() {
   )
 }
 
+function PinIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <path d="M12 21s7-5.4 7-11a7 7 0 1 0-14 0c0 5.6 7 11 7 11Z" />
+      <circle cx="12" cy="10" r="2.2" />
+    </svg>
+  )
+}
+
+function SunIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <circle cx="12" cy="12" r="4" />
+      <path d="M12 3v1.6M12 19.4V21M4.6 12H3M21 12h-1.6M6.2 6.2l1.1 1.1M16.7 16.7l1.1 1.1M17.8 6.2l-1.1 1.1M7.3 16.7l-1.1 1.1" />
+    </svg>
+  )
+}
+
+function MoonIcon() {
+  return (
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <path d="M20 14.5A7.5 7.5 0 1 1 9.5 4 6.4 6.4 0 0 0 20 14.5Z" />
+    </svg>
+  )
+}
+
+const DEFAULT_NEWS_IMAGE = '/news-default.svg'
+
+function CoverImage({
+  src,
+  className,
+}: {
+  src?: string
+  className?: string
+}) {
+  const [failed, setFailed] = useState(false)
+  useEffect(() => {
+    setFailed(false)
+  }, [src])
+  const url = src && !failed ? src : DEFAULT_NEWS_IMAGE
+  return (
+    <img
+      src={url}
+      alt=""
+      referrerPolicy="no-referrer"
+      className={className}
+      onError={() => {
+        if (url !== DEFAULT_NEWS_IMAGE) setFailed(true)
+      }}
+    />
+  )
+}
+
 function Tag({ label, active, onClick }: { label: string; active: boolean; onClick: () => void }) {
   return (
     <button
@@ -171,8 +241,8 @@ function Tag({ label, active, onClick }: { label: string; active: boolean; onCli
       className="px-3 sm:px-4 py-2 rounded-full text-sm transition-all duration-150 min-h-10"
       style={
         active
-          ? { background: '#EA580C', color: '#FFFFFF', fontWeight: 600 }
-          : { background: '#17172A', color: '#B8B4AC', border: '1px solid rgba(255,255,255,0.08)' }
+          ? { background: 'var(--orange)', color: '#FFFFFF', fontWeight: 600 }
+          : { background: 'var(--elevated)', color: 'var(--chip-text)', border: '1px solid var(--border)' }
       }
     >
       {label}
@@ -200,7 +270,7 @@ function BrandMark({ size = 22 }: { size?: number }) {
   return (
     <span className="inline-flex items-center gap-2 min-w-0">
       <PulseMark size={size} />
-      <span className="text-[11px] md:text-[12px] font-semibold tracking-[0.32em] md:tracking-[0.38em] uppercase" style={{ color: '#F5A623' }}>
+      <span className="text-[11px] md:text-[12px] font-semibold tracking-[0.32em] md:tracking-[0.38em] uppercase" style={{ color: 'var(--amber)' }}>
         Pulse
       </span>
     </span>
@@ -213,50 +283,69 @@ function todayLabel() {
 
 function SiteHeader({
   tab,
+  home,
+  detecting,
+  theme,
   onNavigate,
   onRefresh,
+  onToggleTheme,
   refreshing,
 }: {
   tab: Tab
+  home: HomePlace
+  detecting: boolean
+  theme: ThemeName
   onNavigate: (next: Tab) => void
   onRefresh: () => void
+  onToggleTheme: () => void
   refreshing: boolean
 }) {
   const editing = tab === 'profile'
+  const city = home.city
+  const state = home.state
+  const locLabel = city || (detecting ? 'Locating…' : 'Set location')
+  const locTitle = homePlaceLabel(home) || locLabel
   return (
-    <header
-      className="sticky top-0 z-50"
-      style={{
-        background: 'rgba(7,7,12,0.92)',
-        backdropFilter: 'blur(18px)',
-        borderBottom: '1px solid rgba(255,255,255,0.06)',
-        paddingTop: 'env(safe-area-inset-top)',
-      }}
-    >
-      <div className="px-4 sm:px-5 md:px-10 h-14 md:h-16 flex items-center gap-2 sm:gap-3">
+    <header className="sticky top-0 z-50 pulse-header">
+      <div className="px-3 sm:px-5 md:px-10 h-14 md:h-16 flex items-center gap-2 sm:gap-3">
         <button onClick={() => onNavigate('home')} className="shrink-0">
           <BrandMark size={24} />
         </button>
-        <div className="ml-auto flex items-center gap-2 sm:gap-2.5">
+        <div className="ml-auto flex items-center gap-1.5 sm:gap-2 min-w-0">
+          <button
+            type="button"
+            onClick={() => onNavigate('profile')}
+            className={`header-chip is-location ${editing ? 'is-active' : ''}`}
+            title={locTitle}
+            aria-label={`Location: ${locTitle}`}
+          >
+            <PinIcon />
+            <span className="truncate">{locLabel}</span>
+            {city && state ? <span className="hidden sm:inline" style={{ color: 'var(--muted)', fontWeight: 500 }}>· {state}</span> : null}
+          </button>
           <button
             onClick={() => onNavigate('profile')}
-            className="px-3 py-1.5 rounded-lg text-xs sm:text-sm min-h-9 whitespace-nowrap"
-            style={{
-              color: editing ? '#F5A623' : '#C4B9A8',
-              border: editing ? '1px solid rgba(245,166,35,0.45)' : '1px solid rgba(255,255,255,0.1)',
-              background: editing ? 'rgba(245,166,35,0.12)' : '#17172A',
-              fontWeight: 600,
-            }}
+            className={`header-chip ${editing ? 'is-active' : ''}`}
           >
-            Edit topics
+            <span className="sm:hidden">Topics</span>
+            <span className="hidden sm:inline">Edit topics</span>
           </button>
           <button
             onClick={onRefresh}
             disabled={refreshing}
-            className="px-3 py-1.5 rounded-lg text-xs sm:text-sm min-h-9"
-            style={{ color: '#F5A623', border: '1px solid rgba(245,166,35,0.35)', background: '#17172A', fontWeight: 600 }}
+            className="header-chip"
+            style={{ color: 'var(--amber)' }}
           >
             {refreshing ? 'Updating…' : 'Refresh'}
+          </button>
+          <button
+            type="button"
+            onClick={onToggleTheme}
+            className="header-icon"
+            aria-label={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+            title={theme === 'dark' ? 'Light mode' : 'Dark mode'}
+          >
+            {theme === 'dark' ? <SunIcon /> : <MoonIcon />}
           </button>
         </div>
       </div>
@@ -266,40 +355,62 @@ function SiteHeader({
 
 function OnboardingLocation({
   selected,
+  home,
+  detecting,
   onToggle,
+  onDetect,
   onNext,
 }: {
   selected: Set<string>
+  home: HomePlace
+  detecting: boolean
   onToggle: (s: string) => void
+  onDetect: () => void
   onNext: () => void
 }) {
+  const found = homePlaceLabel(home)
   return (
-    <div className="min-h-dvh" style={{ background: '#07070C' }}>
+    <div className="min-h-dvh" style={{ background: 'var(--paper)' }}>
       <div className="max-w-3xl mx-auto px-4 sm:px-6 py-10 sm:py-16">
         <div className="mb-8 sm:mb-10">
           <BrandMark size={26} />
         </div>
-        <h1 className="font-serif text-[#EEE8E0] text-[32px] sm:text-[42px] leading-tight mb-3">Where should we pull news from?</h1>
-        <p className="text-sm sm:text-base mb-8 sm:mb-10" style={{ color: '#9B968F' }}>Pick the places that become your Home rows.</p>
+        <h1 className="font-serif text-[color:var(--ink)] text-[32px] sm:text-[42px] leading-tight mb-3">Where should we pull news from?</h1>
+        <p className="text-sm sm:text-base mb-4" style={{ color: 'var(--muted)' }}>
+          {detecting
+            ? 'Finding your city and state…'
+            : found
+              ? `Your local rows stay on: ${found}. Add anywhere else you follow.`
+              : 'Pick the places that become your Home rows. We can also detect your city and state.'}
+        </p>
+        <button
+          type="button"
+          onClick={onDetect}
+          disabled={detecting}
+          className="mb-8 sm:mb-10 text-sm font-semibold min-h-10"
+          style={{ color: 'var(--amber)' }}
+        >
+          {detecting ? 'Detecting…' : found ? 'Update from my location' : 'Detect my location'}
+        </button>
         <div className="space-y-8 mb-10 sm:mb-12">
           <div>
-            <div className="text-[10px] font-semibold tracking-[0.2em] uppercase mb-3" style={{ color: '#8A8AA0' }}>Cities</div>
+            <div className="text-[10px] font-semibold tracking-[0.2em] uppercase mb-3" style={{ color: 'var(--dim)' }}>Cities</div>
             <div className="flex flex-wrap gap-2">{CITIES.map(c => <Tag key={c} label={c} active={selected.has(c)} onClick={() => onToggle(c)} />)}</div>
           </div>
           <div>
-            <div className="text-[10px] font-semibold tracking-[0.2em] uppercase mb-3" style={{ color: '#8A8AA0' }}>States & regions</div>
+            <div className="text-[10px] font-semibold tracking-[0.2em] uppercase mb-3" style={{ color: 'var(--dim)' }}>States & regions</div>
             <div className="flex flex-wrap gap-2">{STATES.map(s => <Tag key={s} label={s} active={selected.has(s)} onClick={() => onToggle(s)} />)}</div>
           </div>
           <div>
-            <div className="text-[10px] font-semibold tracking-[0.2em] uppercase mb-3" style={{ color: '#8A8AA0' }}>Broader coverage</div>
-            <div className="flex flex-wrap gap-2">{['India', 'World'].map(g => <Tag key={g} label={g} active={selected.has(g)} onClick={() => onToggle(g)} />)}</div>
+            <div className="text-[10px] font-semibold tracking-[0.2em] uppercase mb-3" style={{ color: 'var(--dim)' }}>Broader coverage</div>
+            <div className="flex flex-wrap gap-2">{BROADER.map(g => <Tag key={g} label={g} active={selected.has(g)} onClick={() => onToggle(g)} />)}</div>
           </div>
         </div>
         <button
           onClick={onNext}
           disabled={selected.size === 0}
           className="w-full sm:w-auto px-8 py-4 rounded-xl text-base font-semibold min-h-12"
-          style={{ background: '#EA580C', color: '#FFFFFF', opacity: selected.size === 0 ? 0.35 : 1 }}
+          style={{ background: 'var(--orange)', color: '#FFFFFF', opacity: selected.size === 0 ? 0.35 : 1 }}
         >
           Continue →
         </button>
@@ -318,17 +429,17 @@ function OnboardingTopics({
   onDone: () => void
 }) {
   return (
-    <div className="min-h-dvh" style={{ background: '#07070C' }}>
+    <div className="min-h-dvh" style={{ background: 'var(--paper)' }}>
       <div className="max-w-3xl mx-auto px-4 sm:px-6 py-10 sm:py-16">
         <div className="mb-8 sm:mb-10">
           <BrandMark size={26} />
         </div>
-        <h1 className="font-serif text-[#EEE8E0] text-[32px] sm:text-[42px] leading-tight mb-3">Any extra topics?</h1>
-        <p className="text-sm sm:text-base mb-8 sm:mb-10" style={{ color: '#9B968F' }}>These show up as extra rows under Pune, Maharashtra, India, and World.</p>
+        <h1 className="font-serif text-[color:var(--ink)] text-[32px] sm:text-[42px] leading-tight mb-3">Any extra topics?</h1>
+        <p className="text-sm sm:text-base mb-8 sm:mb-10" style={{ color: 'var(--muted)' }}>These show up as extra rows under your city, state, India, and World.</p>
         <div className="flex flex-wrap gap-2 mb-6">
           {TOPICS.map(t => <Tag key={t} label={t} active={selected.has(t)} onClick={() => onToggle(t)} />)}
         </div>
-        <button onClick={onDone} className="w-full sm:w-auto px-8 py-4 rounded-xl text-base font-semibold min-h-12" style={{ background: '#EA580C', color: '#FFFFFF' }}>
+        <button onClick={onDone} className="w-full sm:w-auto px-8 py-4 rounded-xl text-base font-semibold min-h-12" style={{ background: 'var(--orange)', color: '#FFFFFF' }}>
           Load today’s edition →
         </button>
       </div>
@@ -358,32 +469,21 @@ function PosterCard({
           ? 'shrink-0 w-[78vw] max-w-[260px] sm:w-[240px] sm:max-w-none md:w-[280px] text-left rounded-xl overflow-hidden snap-start group'
           : 'w-full min-w-0 text-left rounded-xl overflow-hidden group'
       }
-      style={{ background: '#141424', border: '1px solid rgba(255,255,255,0.06)' }}
+      style={{ background: 'var(--surface)', border: '1px solid var(--border)' }}
     >
       <div
         className={rail ? 'relative h-[140px] sm:h-[150px] md:h-[168px] overflow-hidden' : 'relative h-[150px] sm:h-[160px] overflow-hidden'}
-        style={{ background: '#1A1A2C' }}
+        style={{ background: 'var(--elevated)' }}
       >
-        {story.image ? (
-          <img
-            src={story.image}
-            alt=""
-            referrerPolicy="no-referrer"
-            className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-105"
-          />
-        ) : (
-          <div
-            className="w-full h-full flex items-end p-4"
-            style={{ background: 'linear-gradient(160deg, #2A1E10 0%, #141424 58%, #0E0E18 100%)' }}
-          >
-            <span className="text-xs font-medium" style={{ color: '#F5A623' }}>{sourceName(story)}</span>
-          </div>
-        )}
-        <div className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity" style={{ background: 'linear-gradient(to top, rgba(7,7,12,0.75), transparent 55%)' }} />
+        <CoverImage
+          src={story.image}
+          className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-105"
+        />
+        <div className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity" style={{ background: 'var(--poster-wash)' }} />
       </div>
       <div className="p-3.5">
-        <div className="text-[11px] mb-1.5 truncate font-semibold" style={{ color: '#F5A623' }}>{sourceName(story)} · {story.time}</div>
-        <div className="text-[15px] font-medium leading-snug line-clamp-2" style={{ color: '#EEE8E0' }}>{story.headline}</div>
+        <div className="text-[11px] mb-1.5 truncate font-semibold" style={{ color: 'var(--amber)' }}>{sourceName(story)} · {story.time}</div>
+        <div className="text-[15px] font-medium leading-snug line-clamp-2" style={{ color: 'var(--ink)' }}>{story.headline}</div>
       </div>
     </button>
   )
@@ -394,7 +494,7 @@ function RowArrow({ dir, label, onClick }: { dir: 'left' | 'right'; label: strin
     <button
       onClick={onClick}
       className="nav-btn hidden sm:flex w-10 h-10 lg:w-11 lg:h-11 justify-self-center"
-      style={{ background: '#17172A', color: '#EEE8E0', border: '1px solid rgba(255,255,255,0.12)' }}
+      style={{ background: 'var(--elevated)', color: 'var(--ink)', border: '1px solid var(--border-strong)' }}
       aria-label={label}
     >
       <NavChevron dir={dir} size={18} />
@@ -412,7 +512,7 @@ function ShelfRow({ title, stories, onOpen }: { title: string; stories: StoryCar
     <section className="mb-6 sm:mb-7">
       <div className="grid grid-cols-1 sm:grid-cols-[44px_minmax(0,1fr)_44px] lg:grid-cols-[52px_minmax(0,1fr)_52px] px-1 sm:px-2 md:px-3 mb-2 sm:mb-2.5">
         <div className="hidden sm:block" />
-        <h2 className="px-3 sm:px-1 text-[18px] sm:text-[20px] md:text-[22px] font-semibold tracking-tight" style={{ color: '#EEE8E0' }}>
+        <h2 className="px-3 sm:px-1 text-[18px] sm:text-[20px] md:text-[22px] font-semibold tracking-tight" style={{ color: 'var(--ink)' }}>
           {title}
         </h2>
       </div>
@@ -424,7 +524,7 @@ function ShelfRow({ title, stories, onOpen }: { title: string; stories: StoryCar
               key={story.id}
               story={story}
               onClick={() => onOpen(story)}
-              onPrefetch={() => { void prefetchStoryArticle(story) }}
+              onPrefetch={() => { void prefetchStoryArticle(story); prefetchStoryListen(story) }}
             />
           ))}
         </div>
@@ -434,9 +534,9 @@ function ShelfRow({ title, stories, onOpen }: { title: string; stories: StoryCar
   )
 }
 
-function searchStories(edition: NewsPayload, query: string, topic: string) {
+function searchStories(edition: NewsPayload, query: string, topic: string, home?: HomePlace) {
   const q = query.trim().toLowerCase()
-  return orderedShelves(edition.shelves)
+  return orderedShelves(edition.shelves, home)
     .filter(s => topic === 'All' || shelfTitle(s.label) === topic)
     .flatMap(s => s.stories)
     .filter(s => !q || `${s.headline} ${s.summary} ${s.category} ${s.shelf} ${sourceName(s)}`.toLowerCase().includes(q))
@@ -446,12 +546,14 @@ function HomePage({
   edition,
   loading,
   error,
+  home,
   onRetry,
   onStoryTap,
 }: {
   edition: NewsPayload
   loading: boolean
   error: string | null
+  home: HomePlace
   onRetry: () => void
   onStoryTap: (s: StoryCard) => void
 }) {
@@ -460,10 +562,10 @@ function HomePage({
   const [query, setQuery] = useState('')
   const [topic, setTopic] = useState('All')
   const speech = useRef<SpeechHandle | null>(null)
-  const rows = orderedShelves(edition.shelves)
+  const rows = orderedShelves(edition.shelves, home)
   const labels = ['All', ...rows.map(s => shelfTitle(s.label))]
   const searching = Boolean(query.trim()) || topic !== 'All'
-  const results = searching ? searchStories(edition, query, topic) : []
+  const results = searching ? searchStories(edition, query, topic, home) : []
 
   useEffect(() => () => speech.current?.stop(), [])
   useEffect(() => {
@@ -513,42 +615,42 @@ function HomePage({
           <div
             className="rounded-2xl px-4 py-5 sm:px-6 sm:py-6 md:px-7 md:py-6"
             style={{
-              background: 'linear-gradient(145deg, #1E1A16 0%, #16161F 52%, #12121A 100%)',
-              border: '1px solid rgba(245,166,35,0.22)',
-              boxShadow: '0 16px 40px rgba(0,0,0,0.28)',
+              background: 'var(--hero)',
+              border: '1px solid var(--amber-border)',
+              boxShadow: 'var(--shadow)',
             }}
           >
-            <div className="text-[11px] tracking-[0.2em] uppercase mb-1.5 font-semibold" style={{ color: '#F5A623' }}>
+            <div className="text-[11px] tracking-[0.2em] uppercase mb-1.5 font-semibold" style={{ color: 'var(--amber)' }}>
               {todayLabel()}
             </div>
             <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 sm:gap-6">
-              <h1 className="font-serif text-[24px] sm:text-[30px] md:text-[34px] leading-[1.08] text-[#EEE8E0]">Today’s Pulse</h1>
+              <h1 className="font-serif text-[24px] sm:text-[30px] md:text-[34px] leading-[1.08] text-[color:var(--ink)]">Today’s Pulse</h1>
               <div className="flex flex-wrap items-center gap-2.5 shrink-0">
                 <button
                   onClick={toggleAudio}
                   disabled={!edition.brief.sections.length}
                   className="inline-flex items-center justify-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold min-h-10"
-                  style={{ background: '#EA580C', color: '#FFFFFF', opacity: edition.brief.sections.length ? 1 : 0.4 }}
+                  style={{ background: 'var(--orange)', color: '#FFFFFF', opacity: edition.brief.sections.length ? 1 : 0.4 }}
                 >
                   {audioOn ? <PauseIcon fill="#FFFFFF" /> : <PlayIcon fill="#FFFFFF" />}
                   {audioBusy ? 'Starting…' : audioOn ? 'Stop brief' : 'Today’s brief'}
                 </button>
               </div>
             </div>
-            <p className="text-sm mt-2" style={{ color: '#9B968F' }}>
+            <p className="text-sm mt-2" style={{ color: 'var(--muted)' }}>
               {loading && !rows.length
                 ? 'Pulling live stories from newsrooms…'
                 : `${edition.brief.storyCount || 0} stories · ${edition.brief.minutes || 2} min listen.`}
             </p>
             {error && (
-              <div className="rounded-xl p-3 mt-3 text-sm" style={{ background: 'rgba(138,59,50,0.18)', color: '#E8B4AE' }}>
+              <div className="rounded-xl p-3 mt-3 text-sm" style={{ background: 'var(--error-bg)', color: 'var(--error-text)' }}>
                 {error}
-                <button onClick={onRetry} className="ml-3" style={{ color: '#F5A623' }}>Try again</button>
+                <button onClick={onRetry} className="ml-3" style={{ color: 'var(--amber)' }}>Try again</button>
               </div>
             )}
-            <div className="mt-5 pt-5" style={{ borderTop: '1px solid rgba(255,255,255,0.08)' }}>
+            <div className="mt-5 pt-5" style={{ borderTop: '1px solid var(--border)' }}>
               <label className="relative block">
-                <span className="absolute left-4 top-1/2 -translate-y-1/2" style={{ color: '#8A8AA0' }}>
+                <span className="absolute left-4 top-1/2 -translate-y-1/2" style={{ color: 'var(--dim)' }}>
                   <SearchIcon />
                 </span>
                 <input
@@ -556,7 +658,7 @@ function HomePage({
                   onChange={e => setQuery(e.target.value)}
                   placeholder="Search today’s stories"
                   className="w-full rounded-xl pl-11 pr-4 py-3 text-sm outline-none min-h-12"
-                  style={{ background: '#0E0E18', color: '#EEE8E0', border: '1px solid rgba(255,255,255,0.1)' }}
+                  style={{ background: 'var(--input)', color: 'var(--ink)', border: '1px solid var(--border-strong)' }}
                 />
               </label>
               <div className="flex gap-2 overflow-x-auto scrollbar-none mt-4 pb-0.5 -mx-1 px-1">
@@ -579,13 +681,13 @@ function HomePage({
                 key={`${story.id}-${story.shelf}`}
                 story={story}
                 onClick={() => onStoryTap(story)}
-                onPrefetch={() => { void prefetchStoryArticle(story) }}
+                onPrefetch={() => { void prefetchStoryArticle(story); prefetchStoryListen(story) }}
                 layout="grid"
               />
             ))}
           </div>
           {results.length === 0 && (
-            <p className="text-sm mt-2" style={{ color: '#8A8AA0' }}>No stories match that search.</p>
+            <p className="text-sm mt-2" style={{ color: 'var(--dim)' }}>No stories match that search.</p>
           )}
         </div>
       ) : (
@@ -599,7 +701,7 @@ function HomePage({
             />
           ))}
           {!rows.length && !loading && (
-            <p className="px-4 sm:px-5 md:px-10 text-sm" style={{ color: '#9B968F' }}>No stories yet. Refresh the edition.</p>
+            <p className="px-4 sm:px-5 md:px-10 text-sm" style={{ color: 'var(--muted)' }}>No stories yet. Refresh the edition.</p>
           )}
         </div>
       )}
@@ -659,6 +761,11 @@ function StoryPage({ story, onBack }: { story: StoryCard; onBack: () => void }) 
   const listenScripts = storyListenScripts(story, body)
   const canListen = canSpeak() && listenScripts.length > 0
 
+  useEffect(() => {
+    if (!canListen) return
+    prefetchStoryListen(story, body)
+  }, [story.id, body[0], canListen])
+
   const toggleListen = () => {
     if (listening) {
       speech.current?.stop()
@@ -683,26 +790,26 @@ function StoryPage({ story, onBack }: { story: StoryCard; onBack: () => void }) 
 
   return (
     <div className="max-w-[860px] mx-auto px-4 sm:px-6 lg:px-8 py-8 sm:py-10">
-      <button onClick={onBack} className="flex items-center gap-1 text-sm mb-6 sm:mb-8 min-h-10" style={{ color: '#8A8AA0' }}>
+      <button onClick={onBack} className="flex items-center gap-1 text-sm mb-6 sm:mb-8 min-h-10" style={{ color: 'var(--dim)' }}>
         <ChevronLeft /> Back
       </button>
-      {heroImage && <img src={heroImage} alt="" referrerPolicy="no-referrer" className="w-full h-48 sm:h-64 md:h-72 object-cover rounded-2xl mb-6 sm:mb-8" />}
-      <div className="flex flex-wrap items-center gap-2 text-[12px] mb-4" style={{ color: '#8A8AA0' }}>
-        <span style={{ color: '#F5A623' }}>{sourceName(story)}</span>
+      <CoverImage src={heroImage} className="w-full h-48 sm:h-64 md:h-72 object-cover rounded-2xl mb-6 sm:mb-8" />
+      <div className="flex flex-wrap items-center gap-2 text-[12px] mb-4" style={{ color: 'var(--dim)' }}>
+        <span style={{ color: 'var(--amber)' }}>{sourceName(story)}</span>
         <span>·</span>
         <span>{shelfTitle(story.shelf)}</span>
         <span>·</span>
         <span>{story.time}</span>
       </div>
-      <h1 className="font-serif text-[#EEE8E0] text-[26px] sm:text-[32px] md:text-[36px] leading-tight mb-5">{story.headline}</h1>
+      <h1 className="font-serif text-[color:var(--ink)] text-[26px] sm:text-[32px] md:text-[36px] leading-tight mb-5">{story.headline}</h1>
       <button
         onClick={toggleListen}
         disabled={!canListen}
         className="inline-flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-semibold mb-8 min-h-10"
         style={{
-          background: listening ? '#EA580C' : '#17172A',
-          color: '#EEE8E0',
-          border: listening ? 'none' : '1px solid rgba(255,255,255,0.12)',
+          background: listening ? 'var(--orange)' : 'var(--elevated)',
+          color: listening ? '#FFFFFF' : 'var(--ink)',
+          border: listening ? 'none' : '1px solid var(--border-strong)',
           opacity: canListen ? 1 : 0.4,
         }}
       >
@@ -710,18 +817,18 @@ function StoryPage({ story, onBack }: { story: StoryCard; onBack: () => void }) 
         {listenBusy ? 'Starting…' : listening ? 'Stop' : 'Listen'}
       </button>
       <div className="mb-10">
-        {loadingArticle && <p className="text-sm mb-4" style={{ color: '#9B968F' }}>Loading the original article…</p>}
+        {loadingArticle && <p className="text-sm mb-4" style={{ color: 'var(--muted)' }}>Loading the original article…</p>}
         {articleError && !paragraphs.length && (
-          <p className="text-sm mb-4" style={{ color: '#E8B4AE' }}>{articleError}</p>
+          <p className="text-sm mb-4" style={{ color: 'var(--error-text)' }}>{articleError}</p>
         )}
         <div className="space-y-5">
           {body.map((p, i) => (
-            <p key={i} className="text-[16px] sm:text-[17px] leading-[1.9]" style={{ color: '#C8C2B8' }}>{p}</p>
+            <p key={i} className="text-[16px] sm:text-[17px] leading-[1.9]" style={{ color: 'var(--body)' }}>{p}</p>
           ))}
         </div>
       </div>
       <div>
-        <div className="text-[10px] font-semibold tracking-[0.22em] uppercase mb-4" style={{ color: '#8A8AA0' }}>Source</div>
+        <div className="text-[10px] font-semibold tracking-[0.22em] uppercase mb-4" style={{ color: 'var(--dim)' }}>Source</div>
         <div className="space-y-2">
           {links.map(pub => (
             <a
@@ -730,14 +837,14 @@ function StoryPage({ story, onBack }: { story: StoryCard; onBack: () => void }) 
               target="_blank"
               rel="noreferrer"
               className="flex items-center justify-between gap-3 px-4 py-3.5 rounded-xl min-w-0"
-              style={{ background: '#141424', border: '1px solid rgba(255,255,255,0.06)' }}
+              style={{ background: 'var(--surface)', border: '1px solid var(--border)' }}
             >
-              <span className="text-sm font-medium truncate" style={{ color: '#EEE8E0' }}>{pub.name}</span>
-              <span className="shrink-0 text-[11px]" style={{ color: '#F5A623' }}>Open →</span>
+              <span className="text-sm font-medium truncate" style={{ color: 'var(--ink)' }}>{pub.name}</span>
+              <span className="shrink-0 text-[11px]" style={{ color: 'var(--amber)' }}>Open →</span>
             </a>
           ))}
           {!links.length && readUrl && (
-            <a href={readUrl} target="_blank" rel="noreferrer" className="text-sm" style={{ color: '#F5A623' }}>
+            <a href={readUrl} target="_blank" rel="noreferrer" className="text-sm" style={{ color: 'var(--amber)' }}>
               Open original →
             </a>
           )}
@@ -750,40 +857,62 @@ function StoryPage({ story, onBack }: { story: StoryCard; onBack: () => void }) 
 function ProfilePage({
   locations,
   topics,
+  home,
+  detecting,
   fetchedAt,
   onToggleLoc,
   onToggleTopic,
+  onDetect,
   onNext,
 }: {
   locations: string[]
   topics: string[]
+  home: HomePlace
+  detecting: boolean
   fetchedAt: string
   onToggleLoc: (s: string) => void
   onToggleTopic: (s: string) => void
+  onDetect: () => void
   onNext: () => void
 }) {
   const locSet = new Set(locations)
   const topicSet = new Set(topics)
+  const found = homePlaceLabel(home)
   return (
     <div className="max-w-[760px] mx-auto px-4 sm:px-6 lg:px-8 py-8 sm:py-10 pb-10">
-      <h1 className="font-serif text-[#EEE8E0] text-[32px] sm:text-[40px] mb-2">Edit topics</h1>
-      <p className="text-sm mb-8" style={{ color: '#9B968F' }}>Tap a chip to add or remove it from Home.</p>
-      <div className="rounded-2xl p-5 mb-4" style={{ background: '#141424', border: '1px solid rgba(255,255,255,0.06)' }}>
-        <div className="text-[10px] font-semibold tracking-[0.22em] uppercase mb-3" style={{ color: '#8A8AA0' }}>Cities</div>
+      <h1 className="font-serif text-[color:var(--ink)] text-[32px] sm:text-[40px] mb-2">Edit topics</h1>
+      <p className="text-sm mb-3" style={{ color: 'var(--muted)' }}>
+        {detecting
+          ? 'Finding your city and state…'
+          : found
+            ? `${found} stay on as your local rows. Tap other chips to add or remove them.`
+            : 'Tap a chip to add or remove it from Home. We can detect your city and state.'}
+      </p>
+      <button
+        type="button"
+        onClick={onDetect}
+        disabled={detecting}
+        className="text-sm font-semibold mb-8 min-h-10"
+        style={{ color: 'var(--amber)' }}
+      >
+        {detecting ? 'Detecting…' : found ? 'Update from my location' : 'Detect my location'}
+      </button>
+      <div className="rounded-2xl p-5 mb-4" style={{ background: 'var(--surface)', border: '1px solid var(--border)' }}>
+        <div className="text-[10px] font-semibold tracking-[0.22em] uppercase mb-3" style={{ color: 'var(--dim)' }}>Cities</div>
         <div className="flex flex-wrap gap-2 mb-6">
           {CITIES.map(c => <Tag key={c} label={c} active={locSet.has(c)} onClick={() => onToggleLoc(c)} />)}
         </div>
-        <div className="text-[10px] font-semibold tracking-[0.22em] uppercase mb-3" style={{ color: '#8A8AA0' }}>States & regions</div>
+        <div className="text-[10px] font-semibold tracking-[0.22em] uppercase mb-3" style={{ color: 'var(--dim)' }}>States & regions</div>
         <div className="flex flex-wrap gap-2 mb-6">
           {STATES.map(s => <Tag key={s} label={s} active={locSet.has(s)} onClick={() => onToggleLoc(s)} />)}
         </div>
-        <div className="text-[10px] font-semibold tracking-[0.22em] uppercase mb-3" style={{ color: '#8A8AA0' }}>Broader coverage</div>
+        <div className="text-[10px] font-semibold tracking-[0.22em] uppercase mb-3" style={{ color: 'var(--dim)' }}>Broader coverage</div>
         <div className="flex flex-wrap gap-2">
-          {['India', 'World'].map(g => <Tag key={g} label={g} active={locSet.has(g)} onClick={() => onToggleLoc(g)} />)}
+          {BROADER.map(g => <Tag key={g} label={g} active={locSet.has(g)} onClick={() => onToggleLoc(g)} />)}
         </div>
       </div>
-      <div className="rounded-2xl p-5 mb-6" style={{ background: '#141424', border: '1px solid rgba(255,255,255,0.06)' }}>
-        <div className="text-[10px] font-semibold tracking-[0.22em] uppercase mb-3" style={{ color: '#8A8AA0' }}>Topics</div>
+      <div className="rounded-2xl p-5 mb-6" style={{ background: 'var(--surface)', border: '1px solid var(--border)' }}>
+        <div className="text-[10px] font-semibold tracking-[0.22em] uppercase mb-3" style={{ color: 'var(--dim)' }}>Topics</div>
         <div className="flex flex-wrap gap-2">
           {TOPICS.map(t => <Tag key={t} label={t} active={topicSet.has(t)} onClick={() => onToggleTopic(t)} />)}
         </div>
@@ -792,11 +921,11 @@ function ProfilePage({
         onClick={onNext}
         disabled={!locations.length}
         className="w-full sm:w-auto px-8 py-4 rounded-xl text-base font-semibold min-h-12"
-        style={{ background: '#EA580C', color: '#FFFFFF', opacity: locations.length ? 1 : 0.35 }}
+        style={{ background: 'var(--orange)', color: '#FFFFFF', opacity: locations.length ? 1 : 0.35 }}
       >
         Next →
       </button>
-      <p className="text-sm mt-4" style={{ color: '#9B968F' }}>
+      <p className="text-sm mt-4" style={{ color: 'var(--muted)' }}>
         {fetchedAt ? `Last pulled ${new Date(fetchedAt).toLocaleString('en-IN')}` : 'No live edition yet'}
       </p>
     </div>
@@ -804,7 +933,7 @@ function ProfilePage({
 }
 
 function AppShell({ children }: { children: ReactNode }) {
-  return <div className="min-h-dvh overflow-x-hidden" style={{ background: '#07070C' }}>{children}</div>
+  return <div className="min-h-dvh overflow-x-hidden" style={{ background: 'var(--paper)' }}>{children}</div>
 }
 
 const GUEST_SESSION: Session = { name: '', email: '', loggedInAt: '' }
@@ -812,8 +941,13 @@ const GUEST_SESSION: Session = { name: '', email: '', loggedInAt: '' }
 export default function App() {
   const [screen, setScreen] = useState<Screen>('home')
   const [session, setSession] = useState<Session | null>(GUEST_SESSION)
-  const [selLoc, setSelLoc] = useState<Set<string>>(new Set(['Pune', 'Maharashtra', 'India', 'World']))
+  const [selLoc, setSelLoc] = useState<Set<string>>(new Set(['India', 'World']))
   const [selTopics, setSelTopics] = useState<Set<string>>(new Set(['Technology', 'Business', 'Sports']))
+  const [home, setHome] = useState<HomePlace>({})
+  const [detecting, setDetecting] = useState(false)
+  const [theme, setTheme] = useState<ThemeName>(() =>
+    typeof document !== 'undefined' && document.documentElement.dataset.theme === 'light' ? 'light' : 'dark',
+  )
   const [onboarded, setOnboarded] = useState(true)
   const [activeStory, setActiveStory] = useState<StoryCard | null>(null)
   const [hydrated, setHydrated] = useState(false)
@@ -863,11 +997,17 @@ export default function App() {
   useEffect(() => {
     const existing = readSession()
     const prefs = readPrefs()
-    const locs = prefs?.locations?.length ? prefs.locations : ['Pune', 'Maharashtra', 'India', 'World']
+    const savedHome: HomePlace = { city: prefs?.homeCity, state: prefs?.homeState }
+    const locs = prefs?.locations?.length ? prefs.locations : ['India', 'World']
     const topics = prefs?.topics?.length ? prefs.topics : ['Technology', 'Business', 'Sports']
-    if (prefs?.locations?.length) setSelLoc(new Set(prefs.locations))
+    setHome(savedHome)
+    if (prefs?.theme === 'light' || prefs?.theme === 'dark') {
+      setTheme(prefs.theme)
+      applyTheme(prefs.theme)
+    }
+    setSelLoc(mergeHomeLocations(locs, savedHome))
     if (prefs?.topics) setSelTopics(new Set(prefs.topics))
-    const cached = readCachedEdition(locs, topics)
+    const cached = readCachedEdition([...mergeHomeLocations(locs, savedHome)], topics)
     if (cached?.shelves.length) setEdition(cached)
     setSession(existing ?? GUEST_SESSION)
     setOnboarded(true)
@@ -893,8 +1033,11 @@ export default function App() {
       locations: [...selLoc],
       topics: [...selTopics],
       onboarded,
+      homeCity: home.city,
+      homeState: home.state,
+      theme,
     })
-  }, [selLoc, selTopics, onboarded, hydrated])
+  }, [selLoc, selTopics, onboarded, home, theme, hydrated])
 
   useEffect(() => {
     if (!hydrated || !session || !onboarded) return
@@ -920,8 +1063,50 @@ export default function App() {
     return () => ctrl.abort()
   }, [hydrated, session, onboarded, selLoc, selTopics, refreshNonce])
 
+  const applyDetectedHome = (found: HomePlace, replacePreviousHome: boolean) => {
+    setHome(prevHome => {
+      setSelLoc(locs => {
+        const base = new Set(locs)
+        if (replacePreviousHome) {
+          if (prevHome.city) base.delete(prevHome.city)
+          if (prevHome.state) base.delete(prevHome.state)
+        }
+        return mergeHomeLocations(base, found, !replacePreviousHome && isLegacyDefaultLocations([...locs]))
+      })
+      return found
+    })
+  }
+
+  const runDetect = (preferGps: boolean) => {
+    setDetecting(true)
+    void detectHomePlace(preferGps)
+      .then(found => {
+        if (found) applyDetectedHome(found, preferGps)
+      })
+      .finally(() => setDetecting(false))
+  }
+
+  useEffect(() => {
+    if (!hydrated) return
+    if (home.city || home.state) return
+    let cancelled = false
+    setDetecting(true)
+    void detectHomePlace(false)
+      .then(found => {
+        if (cancelled || !found) return
+        applyDetectedHome(found, false)
+      })
+      .finally(() => {
+        if (!cancelled) setDetecting(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [hydrated, home.city, home.state])
+
   const toggleLoc = (loc: string) =>
     setSelLoc(prev => {
+      if ((home.city === loc || home.state === loc) && prev.has(loc)) return prev
       const n = new Set(prev)
       n.has(loc) ? n.delete(loc) : n.add(loc)
       if (!n.size) return prev
@@ -948,6 +1133,7 @@ export default function App() {
 
   const handleStoryTap = (story: StoryCard) => {
     void prefetchStoryArticle(story)
+    prefetchStoryListen(story)
     pushRoute('story', story)
   }
 
@@ -963,9 +1149,18 @@ export default function App() {
   }
   const tab: Tab = screen === 'profile' ? 'profile' : 'home'
 
-  if (!hydrated) return <div className="min-h-dvh" style={{ background: '#07070C' }} />
+  if (!hydrated) return <div className="min-h-dvh" style={{ background: 'var(--paper)' }} />
   if (screen === 'onboarding-location') {
-    return <OnboardingLocation selected={selLoc} onToggle={toggleLoc} onNext={() => pushRoute('onboarding-topics')} />
+    return (
+      <OnboardingLocation
+        selected={selLoc}
+        home={home}
+        detecting={detecting}
+        onToggle={toggleLoc}
+        onDetect={() => runDetect(true)}
+        onNext={() => pushRoute('onboarding-topics')}
+      />
+    )
   }
   if (screen === 'onboarding-topics') {
     return (
@@ -985,8 +1180,16 @@ export default function App() {
     <AppShell>
       <SiteHeader
         tab={tab}
+        home={home}
+        detecting={detecting}
+        theme={theme}
         onNavigate={goTab}
         onRefresh={() => setRefreshNonce(n => n + 1)}
+        onToggleTheme={() => {
+          const next = theme === 'dark' ? 'light' : 'dark'
+          setTheme(next)
+          applyTheme(next)
+        }}
         refreshing={loading}
       />
       {screen === 'home' && (
@@ -994,6 +1197,7 @@ export default function App() {
           edition={edition}
           loading={loading}
           error={error}
+          home={home}
           onRetry={() => setRefreshNonce(n => n + 1)}
           onStoryTap={handleStoryTap}
         />
@@ -1002,9 +1206,12 @@ export default function App() {
         <ProfilePage
           locations={[...selLoc]}
           topics={[...selTopics]}
+          home={home}
+          detecting={detecting}
           fetchedAt={edition.fetchedAt}
           onToggleLoc={toggleLoc}
           onToggleTopic={toggleTopic}
+          onDetect={() => runDetect(true)}
           onNext={() => {
             setRefreshNonce(n => n + 1)
             pushRoute('home')

@@ -4,14 +4,60 @@
 @theme {
   --font-serif: 'DM Serif Display', Georgia, serif;
   --font-sans: 'Outfit', system-ui, sans-serif;
+}
 
-  --color-ink: #EEE8E0;
-  --color-surface: #141424;
-  --color-elevated: #1A1A28;
-  --color-amber: #F5A623;
-  --color-paper: #07070C;
-  --color-muted: #9B968F;
-  --color-dim: #8A8AA0;
+:root {
+  color-scheme: dark;
+  --paper: #07070C;
+  --header: rgba(7, 7, 12, 0.92);
+  --surface: #141424;
+  --elevated: #17172A;
+  --input: #0E0E18;
+  --ink: #EEE8E0;
+  --muted: #9B968F;
+  --dim: #8A8AA0;
+  --chip-text: #C4B9A8;
+  --amber: #F5A623;
+  --amber-soft: rgba(245, 166, 35, 0.12);
+  --amber-border: rgba(245, 166, 35, 0.4);
+  --orange: #EA580C;
+  --border: rgba(255, 255, 255, 0.08);
+  --border-strong: rgba(255, 255, 255, 0.12);
+  --shadow: 0 16px 40px rgba(0, 0, 0, 0.28);
+  --hero: linear-gradient(145deg, #1e1a16 0%, #16161f 52%, #12121a 100%);
+  --poster-fallback: linear-gradient(160deg, #2a1e10 0%, #141424 58%, #0e0e18 100%);
+  --poster-wash: linear-gradient(to top, rgba(7, 7, 12, 0.75), transparent 55%);
+  --error-bg: rgba(138, 59, 50, 0.18);
+  --error-text: #e8b4ae;
+  --body: #c8c2b8;
+  --scroll: #2a2a40;
+}
+
+html[data-theme='light'] {
+  color-scheme: light;
+  --paper: #f6f1ea;
+  --header: rgba(246, 241, 234, 0.9);
+  --surface: #ffffff;
+  --elevated: #efe9e1;
+  --input: #ffffff;
+  --ink: #1c1917;
+  --muted: #6f6860;
+  --dim: #8a837a;
+  --chip-text: #4a453f;
+  --amber: #c2410c;
+  --amber-soft: rgba(194, 65, 12, 0.1);
+  --amber-border: rgba(194, 65, 12, 0.32);
+  --orange: #ea580c;
+  --border: rgba(28, 25, 23, 0.08);
+  --border-strong: rgba(28, 25, 23, 0.14);
+  --shadow: 0 14px 36px rgba(28, 25, 23, 0.08);
+  --hero: linear-gradient(145deg, #fffaf4 0%, #f7f1ea 48%, #f3ebe2 100%);
+  --poster-fallback: linear-gradient(160deg, #f3e4d4 0%, #efe9e1 58%, #e7dfd4 100%);
+  --poster-wash: linear-gradient(to top, rgba(246, 241, 234, 0.82), transparent 55%);
+  --error-bg: rgba(185, 28, 28, 0.08);
+  --error-text: #9f1239;
+  --body: #3f3a35;
+  --scroll: #d6cfc4;
 }
 
 *, *::before, *::after {
@@ -21,18 +67,18 @@
 html {
   scroll-behavior: smooth;
   overflow-x: hidden;
-  color-scheme: dark;
 }
 
 body {
-  background-color: #07070C;
-  color: #EEE8E0;
+  background-color: var(--paper);
+  color: var(--ink);
   font-family: 'Outfit', system-ui, sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   overflow-x: hidden;
   min-height: 100dvh;
   -webkit-tap-highlight-color: transparent;
+  transition: background-color 0.2s ease, color 0.2s ease;
 }
 
 img {
@@ -56,7 +102,7 @@ button, a, input {
   height: 8px;
 }
 ::-webkit-scrollbar-thumb {
-  background: #2A2A40;
+  background: var(--scroll);
   border-radius: 999px;
 }
 
@@ -85,6 +131,72 @@ button, a, input {
 }
 .nav-btn svg {
   display: block;
+}
+
+.pulse-header {
+  background: var(--header);
+  backdrop-filter: blur(18px);
+  border-bottom: 1px solid var(--border);
+  padding-top: env(safe-area-inset-top);
+}
+
+.header-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 36px;
+  padding: 0 11px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+  background: var(--elevated);
+  color: var(--chip-text);
+  border: 1px solid var(--border);
+  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+.header-chip:hover {
+  border-color: var(--amber-border);
+  color: var(--ink);
+}
+.header-chip.is-active {
+  color: var(--amber);
+  background: var(--amber-soft);
+  border-color: var(--amber-border);
+}
+.header-chip.is-location {
+  color: var(--ink);
+  max-width: 42vw;
+}
+.header-icon {
+  width: 36px;
+  height: 36px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--elevated);
+  color: var(--ink);
+  border: 1px solid var(--border);
+  flex-shrink: 0;
+  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+.header-icon:hover {
+  border-color: var(--amber-border);
+  color: var(--amber);
+}
+
+@media (min-width: 640px) {
+  .header-chip {
+    font-size: 13px;
+    padding: 0 13px;
+    min-height: 38px;
+  }
+  .header-icon {
+    width: 38px;
+    height: 38px;
+  }
 }
 
 @media (max-width: 767px) {

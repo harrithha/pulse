@@ -2,28 +2,19 @@ import { createHash } from 'node:crypto'
 import { existsSync, readFileSync } from 'node:fs'
 import path from 'node:path'
 import type { IncomingMessage, ServerResponse } from 'node:http'
+import { Communicate } from 'edge-tts-universal'
 
 export type TtsOptions = {
-  speechifyKey?: string
-  speechifyVoice?: string
+  voice?: string
 }
 
-type VoiceRow = {
-  id?: string
-  name?: string
-  display_name?: string
-  displayName?: string
-  gender?: string
-}
-
-type VoicePick = { id: string; name: string }
-
-const SPEECHIFY = 'https://api.speechify.ai'
-const STREAM_LIMIT = 18_000
-const FALLBACK: VoicePick = { id: 'geffen_32', name: 'Geffen' }
-const VOICE_CACHE_MS = 30 * 60 * 1000
+const STREAM_LIMIT = 4_000
 const AUDIO_CACHE_MS = 30 * 60 * 1000
-let voiceCache: { at: number; pick: VoicePick } | null = null
+const DEFAULT_VOICE = {
+  id: 'en-US-EmmaNeural',
+  name: 'Emma',
+}
+const PROSODY = { rate: '+18%', pitch: '+2Hz', volume: '+16%' }
 const audioCache = new Map<string, { at: number; buf: Buffer; type: string; voice: string }>()
 
 function envFileValue(name: string) {
@@ -37,12 +28,18 @@ function envFileValue(name: string) {
   }
 }
 
-function apiKey(opts?: TtsOptions) {
-  return (opts?.speechifyKey || process.env.SPEECHIFY_API_KEY || envFileValue('SPEECHIFY_API_KEY')).trim()
+function voiceId(opts?: TtsOptions) {
+  return (
+    envFileValue('TTS_VOICE') ||
+    opts?.voice ||
+    process.env.TTS_VOICE ||
+    DEFAULT_VOICE.id
+  ).trim()
 }
 
-function preferredVoiceId(opts?: TtsOptions) {
-  return (envFileValue('SPEECHIFY_VOICE_ID') || process.env.SPEECHIFY_VOICE_ID || opts?.speechifyVoice || '').trim()
+function voiceName(id: string) {
+  const short = id.split('-').pop()?.replace(/Neural$/i, '') || DEFAULT_VOICE.name
+  return short
 }
 
 function sendJson(res: ServerResponse, status: number, body: unknown) {
@@ -77,92 +74,6 @@ function readJson(req: IncomingMessage): Promise<Record<string, unknown>> {
   })
 }
 
-function asVoices(data: unknown): VoiceRow[] {
-  if (Array.isArray(data)) return data as VoiceRow[]
-  if (data && typeof data === 'object') {
-    const rec = data as Record<string, unknown>
-    if (Array.isArray(rec.voices)) return rec.voices as VoiceRow[]
-    if (Array.isArray(rec.data)) return rec.data as VoiceRow[]
-  }
-  return []
-}
-
-function voiceLabel(v: VoiceRow) {
-  return `${v.id || ''} ${v.display_name || ''} ${v.displayName || ''} ${v.name || ''}`
-}
-
-function nameOf(v: VoiceRow, fallback: string) {
-  return v.display_name || v.displayName || v.name || fallback
-}
-
-async function listVoices(key: string): Promise<VoiceRow[]> {
-  const out: VoiceRow[] = []
-  let cursor: string | undefined
-  for (let page = 0; page < 8; page++) {
-    const url = new URL(`${SPEECHIFY}/v1/voices`)
-    url.searchParams.set('locale', 'en')
-    url.searchParams.set('limit', '100')
-    if (cursor) url.searchParams.set('cursor', cursor)
-    const res = await fetch(url, {
-      headers: { Authorization: `Bearer ${key}` },
-    })
-    if (!res.ok) break
-    const data = (await res.json()) as { has_more?: boolean; next_cursor?: string }
-    out.push(...asVoices(data))
-    if (!data.has_more || !data.next_cursor) break
-    cursor = data.next_cursor
-  }
-  return out
-}
-
-function pickVoice(_voices: VoiceRow[], _preferId?: string): VoicePick {
-  return FALLBACK
-}
-
-async function resolveVoice(_opts?: TtsOptions): Promise<VoicePick> {
-  if (voiceCache && Date.now() - voiceCache.at < VOICE_CACHE_MS && voiceCache.pick.id === FALLBACK.id) {
-    return voiceCache.pick
-  }
-  const pick = FALLBACK
-  voiceCache = { at: Date.now(), pick }
-  return pick
-}
-
-function escapeSsml(text: string) {
-  return text
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&apos;')
-}
-
-function wrapSsml(parts: string[]) {
-  const inner = parts
-    .map(p => p.trim())
-    .filter(Boolean)
-    .map(part => {
-      const sentences = part.split(/(?<=[.!?])\s+/).filter(Boolean)
-      const spoken = sentences
-        .map((sentence, si) => {
-          const pitch = 16 + (si % 2 === 0 ? 4 : -4)
-          const text = escapeSsml(sentence)
-          const marked = si === 0 ? `<emphasis level="strong">${text}</emphasis>` : `<emphasis level="moderate">${text}</emphasis>`
-          return `<prosody rate="20%" pitch="+${pitch}%" volume="loud">${marked}</prosody>`
-        })
-        .join('<break time="60ms"/>')
-      return `<speechify:style emotion="energetic">${spoken}</speechify:style>`
-    })
-    .join('<break time="90ms"/>')
-  return `<speak>${inner}</speak>`
-}
-
-function toInput(parts: string[]) {
-  const ssml = wrapSsml(parts)
-  if (ssml.length <= 19_000) return ssml
-  return parts.map(p => p.trim()).filter(Boolean).join('\n\n').slice(0, 18_000)
-}
-
 function splitText(text: string): string[] {
   const trimmed = text.replace(/\s+/g, ' ').trim()
   if (!trimmed) return []
@@ -180,94 +91,67 @@ function splitText(text: string): string[] {
   return parts
 }
 
-async function speechifyAudio(key: string, voice: VoicePick, input: string) {
-  const tryOnce = (body: string, model: 'simba-3.2' | 'simba-3.0') =>
-    fetch(`${SPEECHIFY}/v1/audio/stream`, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${key}`,
-        'Content-Type': 'application/json',
-        Accept: 'audio/mpeg',
-      },
-      body: JSON.stringify({
-        input: body,
-        voice_id: voice.id,
-        audio_format: 'mp3',
-        model,
-      }),
-    })
-
-  const first = await tryOnce(input, 'simba-3.2')
-  if (first.ok) return first
-  const plain = input.includes('<speak>')
-    ? input
+function toPlain(parts: string[]) {
+  return parts
+    .map(p =>
+      p
         .replace(/<[^>]+>/g, ' ')
-        .replace(/&amp;/g, '&')
-        .replace(/&lt;/g, '<')
-        .replace(/&gt;/g, '>')
-        .replace(/&quot;/g, '"')
-        .replace(/&apos;/g, "'")
         .replace(/\s+/g, ' ')
-        .trim()
-    : ''
-  if (plain) {
-    const second = await tryOnce(plain, 'simba-3.2')
-    if (second.ok) return second
+        .trim(),
+    )
+    .filter(Boolean)
+    .join(' ')
+}
+
+function shapeNewsSpeech(text: string) {
+  let t = text.replace(/\s+/g, ' ').trim()
+  t = t.replace(/\bGood (morning|afternoon|evening)\./gi, 'Good $1!')
+  t = t.replace(/\bHere is today's Pulse\./gi, "Here's today's Pulse!")
+  t = t.replace(/\bThe top (\w+) stories from ([^.]+?) are\./gi, 'From $2... the top $1.')
+  t = t.replace(/\bThe top story from ([^.]+?) is\./gi, 'From $1... the top story.')
+  t = t.replace(/\bThe top (\w+) editorials are\./gi, 'The top $1 editorials. Coming up.')
+  t = t.replace(/\bThe top editorial is\./gi, 'The top editorial. Coming up.')
+  t = t.replace(/\bFirst up\.\s+/gi, 'First up... ')
+  t = t.replace(/\bNext\.\s+/gi, 'Next... ')
+  t = t.replace(/\bAnd finally\.\s+/gi, 'And finally... ')
+  t = t.replace(/\s+/g, ' ').trim()
+  if (t && !/[.!?]$/.test(t)) t += '.'
+  return t
+}
+
+async function edgeAudio(text: string, voice: string, prosody = PROSODY) {
+  const communicate = new Communicate(text, {
+    voice,
+    ...prosody,
+  })
+  const chunks: Buffer[] = []
+  for await (const chunk of communicate.stream()) {
+    if (chunk.type === 'audio' && chunk.data) chunks.push(Buffer.from(chunk.data))
   }
-  const last = await tryOnce(plain || input, 'simba-3.0')
-  if (last.ok) return last
-  throw new Error((await first.text().catch(() => first.statusText)).slice(0, 400) || 'Speechify request failed')
+  if (!chunks.length) throw new Error('No audio received')
+  return Buffer.concat(chunks)
 }
 
 async function handleStatus(res: ServerResponse, opts?: TtsOptions) {
-  const key = apiKey(opts)
-  if (!key) {
-    sendJson(res, 200, {
-      ready: false,
-      provider: 'browser',
-      voice: null,
-      gwyneth: false,
-    })
-    return
-  }
-  try {
-    const voice = await resolveVoice(opts)
-    sendJson(res, 200, {
-      ready: true,
-      provider: 'speechify',
-      voice: voice.name,
-      voiceId: voice.id,
-      gwyneth: /gwyneth/i.test(`${voice.name} ${voice.id}`),
-    })
-  } catch {
-    sendJson(res, 200, {
-      ready: false,
-      provider: 'browser',
-      voice: null,
-      gwyneth: false,
-    })
-  }
+  const id = voiceId(opts)
+  sendJson(res, 200, {
+    ready: true,
+    provider: 'edge',
+    voice: voiceName(id),
+    voiceId: id,
+  })
 }
 
 async function handleSpeakParts(parts: string[], res: ServerResponse, opts?: TtsOptions) {
-  const key = apiKey(opts)
-  if (!key) {
-    sendJson(res, 503, { error: 'missing_key' })
-    return
-  }
-  if (!parts.length) {
+  const text = shapeNewsSpeech(toPlain(parts))
+  if (!text) {
     sendJson(res, 400, { error: 'missing_text' })
     return
   }
-
-  const input = toInput(parts)
-  if (input.length > 20_000) {
-    sendJson(res, 413, { error: 'text_too_long' })
-    return
-  }
-
-  const voice = await resolveVoice(opts)
-  const cacheKey = createHash('sha1').update(`${voice.id}\n${input}`).digest('hex')
+  const voice = voiceId(opts)
+  const cacheKey = createHash('sha1')
+    .update(`${voice}\nmod-v4\n${text}`)
+    .digest('hex')
   const cached = audioCache.get(cacheKey)
   if (cached && Date.now() - cached.at < AUDIO_CACHE_MS) {
     res.statusCode = 200
@@ -279,20 +163,25 @@ async function handleSpeakParts(parts: string[], res: ServerResponse, opts?: Tts
     return
   }
 
-  const upstream = await speechifyAudio(key, voice, input)
-  const buf = Buffer.from(await upstream.arrayBuffer())
+  const pieces = splitText(text)
+  const buffers: Buffer[] = []
+  for (const piece of pieces) {
+    buffers.push(await edgeAudio(piece, voice, PROSODY))
+  }
+  const buf = Buffer.concat(buffers)
   if (!buf.length) {
     sendJson(res, 502, { error: 'empty_audio' })
     return
   }
-  const type = upstream.headers.get('content-type') || 'audio/mpeg'
-  audioCache.set(cacheKey, { at: Date.now(), buf, type, voice: voice.name })
+  const type = 'audio/mpeg'
+  const name = voiceName(voice)
+  audioCache.set(cacheKey, { at: Date.now(), buf, type, voice: name })
 
   res.statusCode = 200
   res.setHeader('Content-Type', type)
   res.setHeader('Content-Length', String(buf.length))
   res.setHeader('Cache-Control', 'private, max-age=120')
-  res.setHeader('X-Pulse-Voice', encodeURIComponent(voice.name))
+  res.setHeader('X-Pulse-Voice', encodeURIComponent(name))
   res.end(buf)
 }
 

@@ -768,9 +768,9 @@ function shelfBriefName(label: string) {
 function topicIntro(name: string, count: number) {
   const n = spokenCount(Math.min(3, count))
   if (name.toLowerCase() === 'editorials') {
-    return count === 1 ? 'The top editorial is.' : `The top ${n} editorials are.`
+    return count === 1 ? 'The top editorial. Coming up.' : `The top ${n} editorials. Coming up.`
   }
-  return count === 1 ? `The top story from ${name} is.` : `The top ${n} stories from ${name} are.`
+  return count === 1 ? `From ${name}... the top story.` : `From ${name}... the top ${n}.`
 }
 
 function indiaHour(at = new Date()) {
@@ -798,7 +798,7 @@ function buildBrief(shelves: Array<{ label: string; stories: Story[] }>) {
       id: 'open',
       label: `${hello}.`,
       sub: 'Today’s Pulse',
-      script: `${hello}. Here is today's Pulse.`,
+      script: `${hello}! Here's today's Pulse.`,
       dur: '0:06',
       storyIds: [],
     },
@@ -818,7 +818,13 @@ function buildBrief(shelves: Array<{ label: string; stories: Story[] }>) {
     const name = shelfBriefName(shelf.label)
     const intro = topicIntro(name, stories.length)
     const lines = stories.map(story => oneLine(story))
-    const script = `${intro} ${lines.join(' ')}`
+    const beats = lines.map((line, i) => {
+      if (lines.length === 1) return line
+      if (i === 0) return `First up. ${line}`
+      if (i === lines.length - 1) return `And finally. ${line}`
+      return `Next. ${line}`
+    })
+    const script = `${intro} ${beats.join(' ')}`
     const secs = Math.max(8, Math.round((script.split(/\s+/).length / 115) * 60))
     sections.push({
       id: `shelf-${shelf.label}`,
