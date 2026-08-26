@@ -227,12 +227,12 @@ function sourceMark(name?: string) {
   return (name || 'PULSE').replace(/[^A-Za-z]/g, '').slice(0, 4).toUpperCase() || 'PULSE'
 }
 
-function CoverFallback({ className, source }: { className?: string; source?: string }) {
+function CoverFallback({ source }: { source?: string }) {
   const uid = useId().replace(/:/g, '')
   const mark = sourceMark(source)
   const markSize = mark.length > 3 ? 28 : mark.length === 3 ? 34 : 42
   return (
-    <div className={`news-fallback ${className || ''}`} aria-hidden>
+    <div className="news-fallback absolute inset-0" aria-hidden>
       <svg viewBox="0 0 640 360" preserveAspectRatio="xMidYMid slice" className="w-full h-full">
         <defs>
           <linearGradient id={`sky-${uid}`} x1="0" y1="0" x2="1" y2="1">
@@ -310,15 +310,21 @@ function CoverImage({
   useEffect(() => {
     setFailed(false)
   }, [src])
-  if (!usableCover(src) || failed) return <CoverFallback className={className} source={source} />
+  const showImg = usableCover(src) && !failed
   return (
-    <img
-      src={src}
-      alt=""
-      referrerPolicy="no-referrer"
-      className={className}
-      onError={() => setFailed(true)}
-    />
+    <div className={`news-cover relative overflow-hidden ${className || ''}`}>
+      {showImg ? (
+        <img
+          src={src}
+          alt=""
+          referrerPolicy="no-referrer"
+          className="absolute inset-0 block h-full w-full max-w-none object-cover object-center transition-transform duration-300 group-hover:scale-105"
+          onError={() => setFailed(true)}
+        />
+      ) : (
+        <CoverFallback source={source} />
+      )}
+    </div>
   )
 }
 
@@ -583,7 +589,7 @@ function PosterCard({
         <CoverImage
           src={story.image}
           source={sourceName(story)}
-          className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-105"
+          className="h-full w-full"
         />
         <div className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity" style={{ background: 'var(--poster-wash)' }} />
       </div>
@@ -917,7 +923,7 @@ function StoryPage({ story, onBack }: { story: StoryCard; onBack: () => void }) 
       <button onClick={onBack} className="flex items-center gap-1 text-sm mb-6 sm:mb-8 min-h-10" style={{ color: 'var(--dim)' }}>
         <ChevronLeft /> Back
       </button>
-      <CoverImage src={heroImage} source={sourceName(story)} className="w-full h-48 sm:h-64 md:h-72 object-cover rounded-2xl mb-6 sm:mb-8" />
+      <CoverImage src={heroImage} source={sourceName(story)} className="w-full h-48 sm:h-64 md:h-72 rounded-2xl mb-6 sm:mb-8" />
       <div className="flex flex-wrap items-center gap-2 text-[12px] mb-4" style={{ color: 'var(--dim)' }}>
         <span style={{ color: 'var(--amber)' }}>{sourceName(story)}</span>
         <span>·</span>

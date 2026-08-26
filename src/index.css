@@ -145,13 +145,23 @@ button, a, input {
   box-shadow: var(--card-shadow);
 }
 
+.news-cover img {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+  max-width: none;
+  object-fit: cover;
+  object-position: center;
+}
+
 .news-fallback {
   display: block;
   width: 100%;
   height: 100%;
   overflow: hidden;
   background: var(--poster-fallback);
-  object-fit: cover;
 }
 .news-fallback svg {
   display: block;
