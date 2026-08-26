@@ -493,7 +493,7 @@ function RowArrow({ dir, label, onClick }: { dir: 'left' | 'right'; label: strin
     <button
       type="button"
       onClick={onClick}
-      className={`nav-btn row-arrow flex w-9 h-9 sm:w-10 sm:h-10 lg:w-11 lg:h-11 sm:justify-self-center ${dir === 'left' ? 'is-left' : 'is-right'}`}
+      className="nav-btn hidden sm:flex w-10 h-10 lg:w-11 lg:h-11 justify-self-center"
       style={{ background: 'var(--elevated)', color: 'var(--ink)', border: '1px solid var(--border-strong)' }}
       aria-label={label}
     >
@@ -519,7 +519,7 @@ function ShelfRow({ title, stories, onOpen }: { title: string; stories: StoryCar
         </h2>
         <div className="hidden sm:block" />
       </div>
-      <div className="shelf-row relative sm:grid sm:grid-cols-[44px_minmax(0,1fr)_44px] lg:grid-cols-[52px_minmax(0,1fr)_52px] items-center sm:px-2 md:px-3">
+      <div className="sm:grid sm:grid-cols-[44px_minmax(0,1fr)_44px] lg:grid-cols-[52px_minmax(0,1fr)_52px] items-center sm:px-2 md:px-3">
         <RowArrow dir="left" label={`Scroll ${title} left`} onClick={() => scrollBy(-1)} />
         <div ref={scroller} className="row-scroll min-w-0">
           {stories.map(story => (

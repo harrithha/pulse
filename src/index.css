@@ -215,18 +215,6 @@ button, a, input {
     scroll-padding-inline: 16px;
     padding: 4px 16px 16px;
   }
-  .row-arrow {
-    position: absolute;
-    z-index: 2;
-    top: 88px;
-    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35);
-  }
-  .row-arrow.is-left {
-    left: 22px;
-  }
-  .row-arrow.is-right {
-    right: 22px;
-  }
   .header-chip.is-location {
     max-width: 30vw;
   }
