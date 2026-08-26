@@ -501,33 +501,16 @@ function RowArrow({ dir, label, onClick }: { dir: 'left' | 'right'; label: strin
   )
 }
 
-function ShelfRow({ title, stories, onOpen, hint = false }: { title: string; stories: StoryCard[]; onOpen: (s: StoryCard) => void; hint?: boolean }) {
+function ShelfRow({ title, stories, onOpen }: { title: string; stories: StoryCard[]; onOpen: (s: StoryCard) => void }) {
   const scroller = useRef<HTMLDivElement>(null)
-  const [hasMore, setHasMore] = useState(stories.length > 1)
-  const updateMore = () => {
-    const el = scroller.current
-    if (!el) return
-    setHasMore(el.scrollWidth - el.scrollLeft - el.clientWidth > 12)
-  }
   const scrollBy = (dir: number) => {
     const el = scroller.current
     if (!el) return
-    el.scrollBy({ left: dir * Math.min(el.clientWidth * 0.82, 720), behavior: 'smooth' })
+    el.scrollBy({ left: dir * Math.min(el.clientWidth * 0.78, 720), behavior: 'smooth' })
   }
-  useEffect(() => {
-    const el = scroller.current
-    if (!el) return
-    updateMore()
-    el.addEventListener('scroll', updateMore, { passive: true })
-    window.addEventListener('resize', updateMore)
-    return () => {
-      el.removeEventListener('scroll', updateMore)
-      window.removeEventListener('resize', updateMore)
-    }
-  }, [stories.length])
   if (!stories.length) return null
   return (
-    <section className="shelf-row mb-7 sm:mb-8">
+    <section className="mb-7 sm:mb-8">
       <div className="grid grid-cols-1 sm:grid-cols-[44px_minmax(0,1fr)_44px] lg:grid-cols-[52px_minmax(0,1fr)_52px] px-1 sm:px-2 md:px-3 mb-2 sm:mb-2.5">
         <div className="hidden sm:block" />
         <div className="px-4 sm:px-1 flex items-center justify-between gap-3">
@@ -538,7 +521,7 @@ function ShelfRow({ title, stories, onOpen, hint = false }: { title: string; sto
             <button
               type="button"
               onClick={() => scrollBy(1)}
-              className="sm:hidden inline-flex items-center gap-0.5 text-[13px] font-semibold min-h-9"
+              className="sm:hidden inline-flex items-center gap-0.5 text-[13px] font-semibold min-h-9 shrink-0"
               style={{ color: 'var(--amber)' }}
               aria-label={`More ${title} stories`}
             >
@@ -548,31 +531,19 @@ function ShelfRow({ title, stories, onOpen, hint = false }: { title: string; sto
           )}
         </div>
       </div>
-      <div className="relative">
-        <div className="grid grid-cols-1 sm:grid-cols-[44px_minmax(0,1fr)_44px] lg:grid-cols-[52px_minmax(0,1fr)_52px] items-center px-0 sm:px-2 md:px-3">
-          <RowArrow dir="left" label={`Scroll ${title} left`} onClick={() => scrollBy(-1)} />
-          <div ref={scroller} className={`row-scroll min-w-0 sm:px-1 ${hint ? 'is-hint' : ''}`}>
-            {stories.map(story => (
-              <PosterCard
-                key={story.id}
-                story={story}
-                onClick={() => onOpen(story)}
-                onPrefetch={() => { void prefetchStoryArticle(story); prefetchStoryListen(story) }}
-              />
-            ))}
-          </div>
-          <RowArrow dir="right" label={`Scroll ${title} right`} onClick={() => scrollBy(1)} />
+      <div className="grid grid-cols-1 sm:grid-cols-[44px_minmax(0,1fr)_44px] lg:grid-cols-[52px_minmax(0,1fr)_52px] items-center px-0 sm:px-2 md:px-3">
+        <RowArrow dir="left" label={`Scroll ${title} left`} onClick={() => scrollBy(-1)} />
+        <div ref={scroller} className="row-scroll min-w-0 sm:px-1">
+          {stories.map(story => (
+            <PosterCard
+              key={story.id}
+              story={story}
+              onClick={() => onOpen(story)}
+              onPrefetch={() => { void prefetchStoryArticle(story); prefetchStoryListen(story) }}
+            />
+          ))}
         </div>
-        {hasMore && (
-          <button
-            type="button"
-            className="shelf-more"
-            onClick={() => scrollBy(1)}
-            aria-label={`Swipe for more ${title} stories`}
-          >
-            <NavChevron dir="right" size={18} />
-          </button>
-        )}
+        <RowArrow dir="right" label={`Scroll ${title} right`} onClick={() => scrollBy(1)} />
       </div>
     </section>
   )
@@ -736,13 +707,12 @@ function HomePage({
         </div>
       ) : (
         <div className="mt-5">
-          {rows.map((shelf, i) => (
+          {rows.map(shelf => (
             <ShelfRow
               key={shelf.label}
               title={shelfTitle(shelf.label)}
               stories={shelf.stories}
               onOpen={onStoryTap}
-              hint={i === 0}
             />
           ))}
           {!rows.length && !loading && (
