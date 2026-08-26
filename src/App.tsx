@@ -6,15 +6,12 @@ import { detectHomePlace, queryGeolocationPermission, subscribeGeolocationPermis
 import {
   BROADER,
   CITIES,
-  CITY_TO_STATE,
   STATES,
   TOPICS,
   homePlaceLabel,
   isLegacyDefaultLocations,
   mergeHomeLocations,
-  type City,
   type HomePlace,
-  type StateName,
 } from './lib/places'
 import { readPrefs, readSession, writePrefs, applyTheme, readTabLocationGranted, writeTabLocation, type ThemeName } from './lib/session'
 import { canSpeak, packScriptGroups, prefetchSpeech, speakSections, type SpeechHandle } from './lib/speech'
@@ -1031,7 +1028,7 @@ function ProfilePage({
         {detecting
           ? 'Waiting for location permission…'
           : found
-            ? `${found} stay on as your local rows. Tap other chips to add or remove them.`
+            ? `${found} is your location. Tap chips to follow extra cities — that does not change it.`
             : 'Showing World news until location is allowed. Tap a chip to follow a place.'}
       </p>
       <button
@@ -1290,23 +1287,8 @@ export default function App() {
   const toggleLoc = (loc: string) =>
     setSelLoc(prev => {
       const n = new Set(prev)
-      if (n.has(loc)) {
-        n.delete(loc)
-        if (home.city === loc) setHome({})
-        else if (home.state === loc) setHome(h => ({ ...h, state: undefined }))
-      } else {
-        n.add(loc)
-        if ((CITIES as readonly string[]).includes(loc)) {
-          const city = loc as City
-          const state = CITY_TO_STATE[city]
-          setHome({ city, state })
-          if (state) n.add(state)
-          markTabLocationOk()
-        } else if ((STATES as readonly string[]).includes(loc) && !home.city) {
-          setHome(h => ({ ...h, state: loc as StateName }))
-          markTabLocationOk()
-        }
-      }
+      if (n.has(loc)) n.delete(loc)
+      else n.add(loc)
       if (!n.size) n.add('World')
       return n
     })
