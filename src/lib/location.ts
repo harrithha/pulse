@@ -1,6 +1,6 @@
 import { matchHomePlace, matchHomePlaceFromCoords, type HomePlace, type RawPlace } from './places'
 
-const GPS_TIMEOUT_MS = 5_000
+const FIX_TIMEOUT_MS = 6_000
 const GEOCODE_TIMEOUT_MS = 2_000
 
 async function fetchJson(url: string, signal: AbortSignal) {
@@ -19,11 +19,58 @@ function gpsCoords(): Promise<{ lat: number; lon: number } | null> {
       resolve(null)
       return
     }
-    navigator.geolocation.getCurrentPosition(
-      pos => resolve({ lat: pos.coords.latitude, lon: pos.coords.longitude }),
-      () => resolve(null),
-      { enableHighAccuracy: false, timeout: GPS_TIMEOUT_MS, maximumAge: 10 * 60 * 1000 },
-    )
+    let settled = false
+    let watchId: number | undefined
+    let timer: number | undefined
+    let unsub: (() => void) | undefined
+
+    const finish = (coords: { lat: number; lon: number } | null) => {
+      if (settled) return
+      settled = true
+      if (watchId != null) navigator.geolocation.clearWatch(watchId)
+      if (timer != null) window.clearTimeout(timer)
+      unsub?.()
+      resolve(coords)
+    }
+
+    const armTimer = () => {
+      if (settled || timer != null) return
+      timer = window.setTimeout(() => finish(null), FIX_TIMEOUT_MS)
+    }
+
+    const onOk = (pos: GeolocationPosition) => {
+      finish({ lat: pos.coords.latitude, lon: pos.coords.longitude })
+    }
+
+    try {
+      watchId = navigator.geolocation.watchPosition(
+        onOk,
+        err => {
+          if (err.code === err.PERMISSION_DENIED) finish(null)
+        },
+        {
+          enableHighAccuracy: false,
+          maximumAge: 15 * 60 * 1000,
+          timeout: 25_000,
+        },
+      )
+    } catch {
+      navigator.geolocation.getCurrentPosition(onOk, () => finish(null), {
+        enableHighAccuracy: false,
+        maximumAge: 15 * 60 * 1000,
+        timeout: 25_000,
+      })
+    }
+
+    void queryGeolocationPermission().then(state => {
+      if (settled) return
+      if (state === 'denied') finish(null)
+      if (state === 'granted') armTimer()
+    })
+    unsub = subscribeGeolocationPermission(state => {
+      if (state === 'denied') finish(null)
+      if (state === 'granted') armTimer()
+    })
   })
 }
 
@@ -97,7 +144,7 @@ export async function detectHomePlace(): Promise<HomePlace | null> {
 
 let earlyDetect: Promise<HomePlace | null> | undefined
 
-/** Start GPS as soon as the app boots, before React hydrates. */
+/** Start a long-lived GPS watch so the Allow dialog cannot kill the request. */
 export function prefetchHomePlace() {
   if (typeof navigator === 'undefined' || !navigator.geolocation) return
   earlyDetect ??= detectHomePlace()

@@ -1239,6 +1239,14 @@ export default function App() {
     setTabLocationOk(true)
   }
 
+  const applySavedHome = () => {
+    const prefs = readPrefs()
+    if (!prefs?.homeCity && !prefs?.homeState) return false
+    applyDetectedHome({ city: prefs.homeCity, state: prefs.homeState }, true)
+    markTabLocationOk()
+    return true
+  }
+
   const detectGen = useRef(0)
   const gpsRetries = useRef(0)
   const usedEarlyDetect = useRef(false)
@@ -1263,12 +1271,9 @@ export default function App() {
         }
         const state = await queryGeolocationPermission()
         if (gen !== detectGen.current) return false
-        if (state === 'granted' && gpsRetries.current < 2) {
+        if (state === 'granted' && gpsRetries.current < 1) {
           gpsRetries.current += 1
-          window.setTimeout(() => {
-            if (detectGen.current !== gen) return
-            runDetectRef.current(true)
-          }, 200)
+          runDetectRef.current(true)
           return true
         }
         if (state !== 'granted') applyWorldDefault()
@@ -1285,15 +1290,24 @@ export default function App() {
 
   useEffect(() => {
     if (!hydrated) return
+    void queryGeolocationPermission().then(state => {
+      if (state === 'granted') applySavedHome()
+    })
     runDetectRef.current()
     const unsub = subscribeGeolocationPermission(state => {
-      if (state === 'granted') runDetectRef.current()
+      if (state === 'granted') {
+        applySavedHome()
+        runDetectRef.current()
+      }
       if (state === 'denied') applyWorldDefault()
     })
     const onReturn = () => {
       if (document.visibilityState && document.visibilityState !== 'visible') return
       void queryGeolocationPermission().then(state => {
-        if (state === 'granted' && !readTabLocationGranted()) runDetectRef.current()
+        if (state === 'granted') {
+          applySavedHome()
+          if (!readTabLocationGranted()) runDetectRef.current()
+        }
       })
     }
     document.addEventListener('visibilitychange', onReturn)
