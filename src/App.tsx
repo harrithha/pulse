@@ -419,7 +419,7 @@ function SiteHeader({
   refreshing: boolean
 }) {
   const editing = tab === 'profile'
-  const locLabel = home.city || (detecting ? 'Locating…' : 'World')
+  const locLabel = home.city || 'World'
   return (
     <header className="sticky top-0 z-50 pulse-header">
       <div className="px-3 sm:px-5 md:px-10 h-14 md:h-16 flex items-center gap-2 sm:gap-3 flex-nowrap overflow-hidden">
@@ -1130,7 +1130,6 @@ export default function App() {
   const [home, setHome] = useState<HomePlace>({})
   const [detecting, setDetecting] = useState(true)
   const [tabLocationOk, setTabLocationOk] = useState(false)
-  const [awaitingLocation, setAwaitingLocation] = useState(true)
   const [theme, setTheme] = useState<ThemeName>(() =>
     typeof document !== 'undefined' && document.documentElement.dataset.theme === 'light' ? 'light' : 'dark',
   )
@@ -1186,7 +1185,6 @@ export default function App() {
     const prefs = readPrefs()
     const granted = readTabLocationGranted()
     setTabLocationOk(granted)
-    setAwaitingLocation(!granted)
     const savedHome: HomePlace = granted ? { city: prefs?.homeCity, state: prefs?.homeState } : {}
     const locs = granted && prefs?.locations?.length ? prefs.locations : ['World', 'India']
     const topics = prefs?.topics?.length ? prefs.topics : ['Technology', 'Business', 'Sports']
@@ -1237,16 +1235,7 @@ export default function App() {
   }, [focusShelves, hydrated])
 
   useEffect(() => {
-    if (!hydrated || !awaitingLocation) return
-    void loadEdition(['World', 'India'], [...selTopics])
-  }, [hydrated, awaitingLocation, selTopics])
-
-  useEffect(() => {
     if (!hydrated || !session || !onboarded) return
-    if (awaitingLocation) {
-      setLoading(true)
-      return
-    }
     const ctrl = new AbortController()
     const locs = [...selLoc]
     const topics = [...selTopics]
@@ -1270,7 +1259,7 @@ export default function App() {
         setLoading(false)
       })
     return () => ctrl.abort()
-  }, [hydrated, session, onboarded, selLoc, selTopics, refreshNonce, awaitingLocation])
+  }, [hydrated, session, onboarded, selLoc, selTopics, refreshNonce])
 
   const applyDetectedHome = (found: HomePlace, replacePreviousHome: boolean) => {
     setHome(prevHome => {
@@ -1321,7 +1310,6 @@ export default function App() {
         if (gen !== detectGen.current) return
         detectInflight.current = false
         setDetecting(false)
-        setAwaitingLocation(false)
       })
   }
   const runDetectRef = useRef(runDetect)
@@ -1339,7 +1327,6 @@ export default function App() {
         detectGen.current += 1
         detectInflight.current = false
         setDetecting(false)
-        setAwaitingLocation(false)
         applyWorldDefault()
       }
     })
