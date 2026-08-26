@@ -493,7 +493,7 @@ function RowArrow({ dir, label, onClick }: { dir: 'left' | 'right'; label: strin
     <button
       type="button"
       onClick={onClick}
-      className="nav-btn flex w-9 h-9 sm:w-10 sm:h-10 lg:w-11 lg:h-11 justify-self-center"
+      className={`nav-btn row-arrow flex w-9 h-9 sm:w-10 sm:h-10 lg:w-11 lg:h-11 sm:justify-self-center ${dir === 'left' ? 'is-left' : 'is-right'}`}
       style={{ background: 'var(--elevated)', color: 'var(--ink)', border: '1px solid var(--border-strong)' }}
       aria-label={label}
     >
@@ -512,14 +512,14 @@ function ShelfRow({ title, stories, onOpen }: { title: string; stories: StoryCar
   if (!stories.length) return null
   return (
     <section className="mb-7 sm:mb-8">
-      <div className="grid grid-cols-[40px_minmax(0,1fr)_40px] sm:grid-cols-[44px_minmax(0,1fr)_44px] lg:grid-cols-[52px_minmax(0,1fr)_52px] px-1 sm:px-2 md:px-3 mb-2 sm:mb-2.5 items-center">
-        <div />
-        <h2 className="px-1 text-[20px] md:text-[22px] font-semibold tracking-tight" style={{ color: 'var(--ink)' }}>
+      <div className="px-4 sm:grid sm:grid-cols-[44px_minmax(0,1fr)_44px] lg:grid-cols-[52px_minmax(0,1fr)_52px] sm:px-2 md:px-3 mb-2 sm:mb-2.5 items-center">
+        <div className="hidden sm:block" />
+        <h2 className="sm:px-1 text-[20px] md:text-[22px] font-semibold tracking-tight" style={{ color: 'var(--ink)' }}>
           {title}
         </h2>
-        <div />
+        <div className="hidden sm:block" />
       </div>
-      <div className="grid grid-cols-[40px_minmax(0,1fr)_40px] sm:grid-cols-[44px_minmax(0,1fr)_44px] lg:grid-cols-[52px_minmax(0,1fr)_52px] items-center px-1 sm:px-2 md:px-3">
+      <div className="shelf-row relative sm:grid sm:grid-cols-[44px_minmax(0,1fr)_44px] lg:grid-cols-[52px_minmax(0,1fr)_52px] items-center sm:px-2 md:px-3">
         <RowArrow dir="left" label={`Scroll ${title} left`} onClick={() => scrollBy(-1)} />
         <div ref={scroller} className="row-scroll min-w-0">
           {stories.map(story => (
