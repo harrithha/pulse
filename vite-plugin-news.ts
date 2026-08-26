@@ -494,6 +494,24 @@ async function mapLimit<T>(items: T[], limit: number, fn: (item: T) => Promise<v
   )
 }
 
+async function settleWithBudget<T>(jobs: Promise<T[]>[], ms: number) {
+  const out: PromiseSettledResult<T[]>[] = jobs.map(() => ({ status: 'rejected', reason: new Error('budget') }))
+  const done = jobs.map((job, i) =>
+    job.then(
+      value => {
+        out[i] = { status: 'fulfilled', value }
+      },
+      reason => {
+        out[i] = { status: 'rejected', reason }
+      },
+    ),
+  )
+  await Promise.race([Promise.allSettled(done), new Promise<void>(resolve => setTimeout(resolve, ms))])
+  if (out.some(row => row.status === 'fulfilled' && row.value.length > 0)) return out
+  await Promise.allSettled(done)
+  return out
+}
+
 async function resolveGoogleNewsUrl(url: string) {
   const articleId = googleNewsArticleId(url)
   if (!articleId) return ''
@@ -1097,9 +1115,15 @@ function buildBrief(shelves: Array<{ label: string; stories: Story[] }>) {
   }
 }
 
-function feedsFor(locations: string[], topics: string[]) {
-  const feeds: Feed[] = []
+function feedsFor(locations: string[], topics: string[], lite = false) {
   const locSet = new Set(locations)
+  if (lite) {
+    const feeds: Feed[] = []
+    if (!locations.length || locSet.has('India')) feeds.push(...INDIA_FEEDS)
+    if (!locations.length || locSet.has('World')) feeds.push(...WORLD_FEEDS)
+    return feeds
+  }
+  const feeds: Feed[] = []
   const cityLike = locations.filter(l => (CITIES as readonly string[]).includes(l))
   const states = locations.filter(l => (STATES as readonly string[]).includes(l))
 
@@ -1146,14 +1170,13 @@ function feedsFor(locations: string[], topics: string[]) {
   return feeds
 }
 
-async function buildEdition(locations: string[], topics: string[]) {
+async function buildEdition(locations: string[], topics: string[], lite = false) {
   googleResolveCache.clear()
   const locs = locations.length ? locations : ['India', 'World']
-  const feeds = feedsFor(locs, topics)
+  const feeds = feedsFor(locs, topics, lite)
   const unique = new Map(feeds.map(f => [`${f.shelf}|${f.url}`, f]))
-  const results = await Promise.allSettled(
-    [...unique.values()].map(async feed => {
-      const xml = await fetchText(feed.url)
+  const jobs = [...unique.values()].map(async feed => {
+      const xml = await fetchText(feed.url, lite ? 1800 : 3200)
       if (!xml) return [] as RawItem[]
       const parsed = parseRss(xml, feed.shelf, feed.publisher)
       const place = placeLabelFromShelf(feed.shelf)
@@ -1176,8 +1199,8 @@ async function buildEdition(locations: string[], topics: string[]) {
         )
       }
       return narrowed
-    }),
-  )
+    })
+  const results = lite ? await settleWithBudget(jobs, 1500) : await Promise.allSettled(jobs)
 
   const byShelf = new Map<string, RawItem[]>()
   for (const result of results) {
@@ -1236,24 +1259,26 @@ async function buildEdition(locations: string[], topics: string[]) {
     }
   }
 
-  await Promise.race([
-    (async () => {
-      const shown = shelves.flatMap(s => s.stories)
-      await resolveEditionLinks(shown)
-      for (let i = shelves.length - 1; i >= 0; i--) {
-        shelves[i].stories = keepArticleStories(shelves[i].stories)
-        if (!shelves[i].stories.length) shelves.splice(i, 1)
-      }
-      dedupeShelves(shelves)
-      const imageless = shelves.flatMap(s => s.stories.filter(story => !story.image).slice(0, 12))
-      await Promise.race([
-        backfillFromPublisherRss(imageless),
-        new Promise<void>(resolve => setTimeout(resolve, 8000)),
-      ])
-      await fillImages(imageless)
-    })(),
-    new Promise<void>(resolve => setTimeout(resolve, 28000)),
-  ])
+  if (!lite) {
+    await Promise.race([
+      (async () => {
+        const shown = shelves.flatMap(s => s.stories)
+        await resolveEditionLinks(shown)
+        for (let i = shelves.length - 1; i >= 0; i--) {
+          shelves[i].stories = keepArticleStories(shelves[i].stories)
+          if (!shelves[i].stories.length) shelves.splice(i, 1)
+        }
+        dedupeShelves(shelves)
+        const imageless = shelves.flatMap(s => s.stories.filter(story => !story.image).slice(0, 12))
+        await Promise.race([
+          backfillFromPublisherRss(imageless),
+          new Promise<void>(resolve => setTimeout(resolve, 8000)),
+        ])
+        await fillImages(imageless)
+      })(),
+      new Promise<void>(resolve => setTimeout(resolve, 28000)),
+    ])
+  }
 
   const highlights = [...shelves.flatMap(s => s.stories)]
     .sort((a, b) => b.sources - a.sources || Date.parse(b.publishedAt) - Date.parse(a.publishedAt))
@@ -1315,10 +1340,13 @@ export async function handleNews(req: IncomingMessage, res: ServerResponse) {
       .map(s => s.trim())
       .filter(Boolean)
     const fresh = url.searchParams.get('fresh') === '1'
-    const key = `${locations.join('|')}::${topics.join('|')}::${new Date().toISOString().slice(0, 10)}`
+    const lite = url.searchParams.get('lite') === '1'
+    const key = `${locations.join('|')}::${topics.join('|')}::${lite ? 'lite' : 'full'}::${new Date().toISOString().slice(0, 10)}`
     const cacheControl = fresh
       ? 'no-store'
-      : 'public, s-maxage=180, stale-while-revalidate=600'
+      : lite
+        ? 'public, s-maxage=240, stale-while-revalidate=1800'
+        : 'public, s-maxage=180, stale-while-revalidate=600'
     const hit = cache.get(key)
     if (!fresh && hit && Date.now() - hit.at < CACHE_MS) {
       res.setHeader('Content-Type', 'application/json; charset=utf-8')
@@ -1326,7 +1354,7 @@ export async function handleNews(req: IncomingMessage, res: ServerResponse) {
       res.end(hit.body)
       return
     }
-    const payload = await buildEdition(locations, topics)
+    const payload = await buildEdition(locations, topics, lite)
     const body = JSON.stringify(payload)
     cache.set(key, { at: Date.now(), body })
     res.setHeader('Content-Type', 'application/json; charset=utf-8')

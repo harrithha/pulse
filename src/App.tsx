@@ -1,5 +1,5 @@
 import { useEffect, useId, useRef, useState, type ReactNode } from 'react'
-import { emptyEdition, getCachedStoryArticle, loadEdition, prefetchStoryArticle, readCachedEdition } from './lib/news'
+import { DEFAULT_LOCATIONS, DEFAULT_TOPICS, emptyEdition, getCachedStoryArticle, loadEdition, prefetchStoryArticle, prefetchWorldEdition, readCachedEdition, readStartupEdition } from './lib/news'
 import { isArticleUrl, isFullArticle } from './lib/articleExtract'
 import { headlineDedupeKey, urlDedupeKey } from './lib/storyDedupe'
 import { cleanArticleParagraphs } from './lib/articleText'
@@ -648,6 +648,32 @@ function RowArrow({ dir, label, onClick }: { dir: 'left' | 'right'; label: strin
   )
 }
 
+function ShelfSkeleton({ title }: { title: string }) {
+  return (
+    <section className="mb-7 sm:mb-8" aria-hidden="true">
+      <div className="px-4 sm:px-2 md:px-3 mb-2 sm:mb-2.5">
+        <h2 className="text-[20px] md:text-[22px] font-semibold tracking-tight" style={{ color: 'var(--ink)' }}>{title}</h2>
+      </div>
+      <div className="flex gap-3 overflow-hidden px-4 sm:px-2 md:px-3">
+        {[0, 1, 2].map(i => (
+          <div
+            key={i}
+            className="shrink-0 w-[86%] sm:w-[240px] md:w-[272px] rounded-2xl overflow-hidden"
+            style={{ background: 'var(--surface)', border: '1px solid var(--card-border)' }}
+          >
+            <div className="h-[168px] sm:h-[150px] md:h-[168px]" style={{ background: 'var(--elevated)' }} />
+            <div className="p-3.5 space-y-2">
+              <div className="h-3 w-24 rounded" style={{ background: 'var(--elevated)' }} />
+              <div className="h-4 w-full rounded" style={{ background: 'var(--elevated)' }} />
+              <div className="h-4 w-2/3 rounded" style={{ background: 'var(--elevated)' }} />
+            </div>
+          </div>
+        ))}
+      </div>
+    </section>
+  )
+}
+
 function ShelfRow({ title, stories, onOpen }: { title: string; stories: StoryCard[]; onOpen: (s: StoryCard) => void }) {
   const scroller = useRef<HTMLDivElement>(null)
   const scrollBy = (dir: number) => {
@@ -790,7 +816,7 @@ function HomePage({
             </div>
             <p className="text-sm mt-2" style={{ color: 'var(--muted)' }}>
               {loading && !rows.length
-                ? 'Pulling live stories from newsrooms…'
+                ? 'Loading World news…'
                 : `${edition.brief.storyCount || 0} stories · ${edition.brief.minutes || 2} min listen.`}
             </p>
             {error && (
@@ -851,6 +877,12 @@ function HomePage({
               onOpen={onStoryTap}
             />
           ))}
+          {loading && !rows.length && (
+            <>
+              <ShelfSkeleton title="World" />
+              <ShelfSkeleton title="India" />
+            </>
+          )}
           {!rows.length && !loading && (
             <p className="px-4 sm:px-5 md:px-10 text-sm" style={{ color: 'var(--muted)' }}>No stories yet. Refresh the edition.</p>
           )}
@@ -1121,23 +1153,47 @@ function AppShell({ children }: { children: ReactNode }) {
 
 const GUEST_SESSION: Session = { name: '', email: '', loggedInAt: '' }
 
+function readStartup() {
+  const prefs = readPrefs()
+  const granted = readTabLocationGranted()
+  const home: HomePlace = granted ? { city: prefs?.homeCity, state: prefs?.homeState } : {}
+  const locs = granted && prefs?.locations?.length ? prefs.locations : DEFAULT_LOCATIONS
+  const topics = prefs?.topics?.length ? prefs.topics : DEFAULT_TOPICS
+  const selLoc = mergeHomeLocations(locs, home)
+  const theme: ThemeName =
+    prefs?.theme === 'light' || prefs?.theme === 'dark'
+      ? prefs.theme
+      : typeof document !== 'undefined' && document.documentElement.dataset.theme === 'light'
+        ? 'light'
+        : 'dark'
+  if (prefs?.theme === 'light' || prefs?.theme === 'dark') applyTheme(prefs.theme)
+  return {
+    home,
+    selLoc,
+    topics: new Set(topics),
+    theme,
+    granted,
+    edition: readStartupEdition([...selLoc], topics) || emptyEdition(),
+    session: readSession() ?? GUEST_SESSION,
+    focus: readFocusShelves(),
+  }
+}
+
 export default function App() {
+  const [boot] = useState(readStartup)
   const [screen, setScreen] = useState<Screen>('home')
-  const [session, setSession] = useState<Session | null>(GUEST_SESSION)
-  const [selLoc, setSelLoc] = useState<Set<string>>(new Set(['World', 'India']))
-  const [selTopics, setSelTopics] = useState<Set<string>>(new Set(['Technology', 'Business', 'Sports']))
-  const [focusShelves, setFocusShelves] = useState<string[]>([])
-  const [home, setHome] = useState<HomePlace>({})
+  const [session, setSession] = useState<Session | null>(boot.session)
+  const [selLoc, setSelLoc] = useState<Set<string>>(() => new Set(boot.selLoc))
+  const [selTopics, setSelTopics] = useState<Set<string>>(() => new Set(boot.topics))
+  const [focusShelves, setFocusShelves] = useState<string[]>(boot.focus)
+  const [home, setHome] = useState<HomePlace>(boot.home)
   const [detecting, setDetecting] = useState(true)
-  const [tabLocationOk, setTabLocationOk] = useState(false)
-  const [theme, setTheme] = useState<ThemeName>(() =>
-    typeof document !== 'undefined' && document.documentElement.dataset.theme === 'light' ? 'light' : 'dark',
-  )
+  const [tabLocationOk, setTabLocationOk] = useState(boot.granted)
+  const [theme, setTheme] = useState<ThemeName>(boot.theme)
   const [onboarded, setOnboarded] = useState(true)
   const [activeStory, setActiveStory] = useState<StoryCard | null>(null)
-  const [hydrated, setHydrated] = useState(false)
-  const [edition, setEdition] = useState<NewsPayload>(emptyEdition())
-  const [loading, setLoading] = useState(false)
+  const [edition, setEdition] = useState<NewsPayload>(boot.edition)
+  const [loading, setLoading] = useState(!boot.edition.shelves.length)
   const [error, setError] = useState<string | null>(null)
   const [refreshNonce, setRefreshNonce] = useState(0)
   const wantFresh = useRef(false)
@@ -1181,29 +1237,20 @@ export default function App() {
   }
 
   useEffect(() => {
-    const existing = readSession()
-    const prefs = readPrefs()
-    const granted = readTabLocationGranted()
-    setTabLocationOk(granted)
-    const savedHome: HomePlace = granted ? { city: prefs?.homeCity, state: prefs?.homeState } : {}
-    const locs = granted && prefs?.locations?.length ? prefs.locations : ['World', 'India']
-    const topics = prefs?.topics?.length ? prefs.topics : ['Technology', 'Business', 'Sports']
-    setHome(savedHome)
-    if (prefs?.theme === 'light' || prefs?.theme === 'dark') {
-      setTheme(prefs.theme)
-      applyTheme(prefs.theme)
-    }
-    setSelLoc(mergeHomeLocations(locs, savedHome))
-    if (prefs?.topics) setSelTopics(new Set(prefs.topics))
-    setFocusShelves(readFocusShelves())
-    const cached = readCachedEdition([...mergeHomeLocations(locs, savedHome)], topics)
-    if (cached?.shelves.length) setEdition(cached)
-    setSession(existing ?? GUEST_SESSION)
-    setOnboarded(true)
     const route = parsePath(window.location.pathname)
     history.replaceState({ screen: route.screen, storyId: route.storyId }, '', pathFor(route.screen, route.storyId))
     setScreen(route.screen === 'story' ? 'story' : route.screen)
-    setHydrated(true)
+    let live = true
+    void prefetchWorldEdition()
+      .then(data => {
+        if (!live || !data.shelves.length) return
+        setEdition(prev => (prev.shelves.some(shelf => shelf.label.startsWith('My City')) ? prev : data))
+        setLoading(false)
+      })
+      .catch(() => {})
+    return () => {
+      live = false
+    }
   }, [])
 
   useEffect(() => {
@@ -1217,7 +1264,6 @@ export default function App() {
   }, [])
 
   useEffect(() => {
-    if (!hydrated) return
     const prev = readPrefs()
     writePrefs({
       topics: [...selTopics],
@@ -1227,31 +1273,33 @@ export default function App() {
       homeCity: tabLocationOk ? home.city : prev?.homeCity,
       homeState: tabLocationOk ? home.state : prev?.homeState,
     })
-  }, [selLoc, selTopics, onboarded, home, theme, tabLocationOk, hydrated])
+  }, [selLoc, selTopics, onboarded, home, theme, tabLocationOk])
 
   useEffect(() => {
-    if (!hydrated) return
     writeFocusShelves(focusShelves)
-  }, [focusShelves, hydrated])
+  }, [focusShelves])
 
   useEffect(() => {
-    if (!hydrated || !session || !onboarded) return
+    if (!session || !onboarded) return
     const ctrl = new AbortController()
     const locs = [...selLoc]
     const topics = [...selTopics]
-    const cached = readCachedEdition(locs, topics)
+    const cached = readCachedEdition(locs, topics) || readStartupEdition(locs, topics)
     if (cached?.shelves.length) {
-      setEdition(cached)
+      setEdition(prev => (prev.shelves.some(shelf => shelf.label.startsWith('My City')) && !cached.shelves.some(shelf => shelf.label.startsWith('My City')) ? prev : cached))
       setLoading(false)
-    } else {
+    } else if (!editionRef.current.shelves.length) {
       setLoading(true)
     }
     setError(null)
     loadEdition(locs, topics, ctrl.signal, wantFresh.current)
-      .then(setEdition)
+      .then(data => {
+        if (ctrl.signal.aborted) return
+        setEdition(data)
+      })
       .catch(err => {
         if ((err as Error).name === 'AbortError') return
-        if (cached?.shelves.length) return
+        if (cached?.shelves.length || editionRef.current.shelves.length) return
         setError(err instanceof Error ? err.message : 'Could not load today’s edition.')
       })
       .finally(() => {
@@ -1259,7 +1307,7 @@ export default function App() {
         setLoading(false)
       })
     return () => ctrl.abort()
-  }, [hydrated, session, onboarded, selLoc, selTopics, refreshNonce])
+  }, [session, onboarded, selLoc, selTopics, refreshNonce])
 
   const applyDetectedHome = (found: HomePlace, replacePreviousHome: boolean) => {
     setHome(prevHome => {
@@ -1277,7 +1325,7 @@ export default function App() {
 
   const applyWorldDefault = () => {
     setHome({})
-    setSelLoc(new Set(['World', 'India']))
+    setSelLoc(new Set(DEFAULT_LOCATIONS))
     writeTabLocation('denied')
     setTabLocationOk(false)
   }
@@ -1316,7 +1364,6 @@ export default function App() {
   runDetectRef.current = runDetect
 
   useEffect(() => {
-    if (!hydrated) return
     runDetectRef.current()
     const unsub = subscribeGeolocationPermission(state => {
       if (state === 'granted') {
@@ -1344,7 +1391,7 @@ export default function App() {
       document.removeEventListener('visibilitychange', onReturn)
       window.removeEventListener('focus', onReturn)
     }
-  }, [hydrated])
+  }, [])
 
   const toggleLoc = (loc: string) => {
     setSelLoc(prev => {
@@ -1402,7 +1449,6 @@ export default function App() {
   }
   const tab: Tab = screen === 'profile' ? 'profile' : 'home'
 
-  if (!hydrated) return <div className="min-h-dvh" style={{ background: 'var(--paper)' }} />
   if (screen === 'onboarding-location') {
     return (
       <OnboardingLocation

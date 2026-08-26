@@ -6,8 +6,12 @@ type ArticleResult = { title?: string; image?: string; paragraphs: string[]; err
 
 const ARTICLE_TTL = 12 * 60 * 1000
 const EDITION_STORE = 'pulse-edition'
+const WORLD_STORE = 'pulse-world-edition'
 const ARTICLE_STORE = 'pulse-article:'
 const EDITION_TTL = 6 * 60 * 60 * 1000
+
+export const DEFAULT_LOCATIONS = ['World', 'India']
+export const DEFAULT_TOPICS = ['Technology', 'Business', 'Sports']
 const articleCache = new Map<string, { at: number; data: ArticleResult }>()
 const articleInflight = new Map<string, Promise<ArticleResult>>()
 const editionInflight = new Map<string, Promise<NewsPayload>>()
@@ -75,18 +79,51 @@ export function writeCachedEdition(locations: string[], topics: string[], data: 
   }
 }
 
+function isWorldDefaultEdition(data: NewsPayload) {
+  return data.shelves.some(shelf => shelf.label === 'World' || shelf.label === 'India')
+}
+
+export function readWorldEdition(): NewsPayload | null {
+  try {
+    const raw = localStorage.getItem(WORLD_STORE)
+    if (!raw) return null
+    const row = JSON.parse(raw) as { at: number; data: NewsPayload }
+    if (!row.data?.shelves?.length) return null
+    if (Date.now() - row.at > EDITION_TTL) return null
+    return row.data
+  } catch {
+    return null
+  }
+}
+
+export function writeWorldEdition(data: NewsPayload) {
+  if (!isWorldDefaultEdition(data)) return
+  try {
+    localStorage.setItem(WORLD_STORE, JSON.stringify({ at: Date.now(), data }))
+  } catch {
+    /* quota */
+  }
+}
+
+export function readStartupEdition(locations: string[], topics: string[]): NewsPayload | null {
+  return readCachedEdition(locations, topics) || readWorldEdition()
+}
+
+type LoadEditionOpts = { lite?: boolean }
+
 export async function loadEdition(
   locations: string[],
   topics: string[],
   signal?: AbortSignal,
   fresh = false,
+  opts?: LoadEditionOpts,
 ): Promise<NewsPayload> {
-  const params = new URLSearchParams({
-    locations: locations.join(','),
-    topics: topics.join(','),
-  })
+  const params = new URLSearchParams()
+  if (locations.length) params.set('locations', locations.join(','))
+  if (topics.length) params.set('topics', topics.join(','))
   if (fresh) params.set('fresh', '1')
-  const key = `${prefsKey(locations, topics)}::${fresh ? '1' : '0'}`
+  if (opts?.lite) params.set('lite', '1')
+  const key = `${prefsKey(locations, topics)}::${fresh ? '1' : '0'}::${opts?.lite ? 'lite' : 'full'}`
   const pending = editionInflight.get(key)
   if (pending && !signal) return pending
   const work = (async () => {
@@ -99,13 +136,26 @@ export async function loadEdition(
     }
     const data = (await res.json()) as NewsPayload & { error?: string }
     if (data.error) throw new Error(data.error)
-    writeCachedEdition(locations, topics, data)
+    if (!opts?.lite) writeCachedEdition(locations, topics, data)
+    const worldOnly = locations.includes('World') && locations.every(loc => loc === 'World' || loc === 'India')
+    if (opts?.lite || worldOnly) writeWorldEdition(data)
     return data
   })().finally(() => {
     if (editionInflight.get(key) === work) editionInflight.delete(key)
   })
   editionInflight.set(key, work)
   return work
+}
+
+let worldPrefetch: Promise<NewsPayload> | undefined
+
+export function prefetchWorldEdition() {
+  if (typeof window === 'undefined') return Promise.resolve(emptyEdition())
+  worldPrefetch ??= loadEdition(DEFAULT_LOCATIONS, [], undefined, false, { lite: true }).catch(err => {
+    worldPrefetch = undefined
+    throw err
+  })
+  return worldPrefetch
 }
 
 export function emptyEdition(): NewsPayload {
