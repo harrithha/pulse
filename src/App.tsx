@@ -421,7 +421,7 @@ function SiteHeader({
   const editing = tab === 'profile'
   const city = home.city
   const state = home.state
-  const locLabel = city || (detecting ? 'Locating…' : 'World')
+  const locLabel = city || state || (detecting ? 'Locating…' : 'World')
   const locTitle = homePlaceLabel(home) || locLabel
   return (
     <header className="sticky top-0 z-50 pulse-header">
@@ -1298,6 +1298,8 @@ export default function App() {
     setTabLocationOk(true)
   }
 
+  const homeRef = useRef(home)
+  homeRef.current = home
   const detectGen = useRef(0)
   const detectInflight = useRef(false)
   const runDetect = () => {
@@ -1345,7 +1347,8 @@ export default function App() {
     const onReturn = () => {
       if (document.visibilityState && document.visibilityState !== 'visible') return
       void queryGeolocationPermission().then(state => {
-        if (state === 'granted' && !readTabLocationGranted()) runDetectRef.current()
+        if (state !== 'granted') return
+        if (!readTabLocationGranted() || !homeRef.current.city) runDetectRef.current()
       })
     }
     document.addEventListener('visibilitychange', onReturn)
