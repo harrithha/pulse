@@ -2,7 +2,7 @@ import { useEffect, useId, useRef, useState, type ReactNode } from 'react'
 import { emptyEdition, getCachedStoryArticle, loadEdition, prefetchStoryArticle, readCachedEdition } from './lib/news'
 import { isFullArticle } from './lib/articleExtract'
 import { cleanArticleParagraphs } from './lib/articleText'
-import { detectHomePlace, queryGeolocationPermission, subscribeGeolocationPermission, takeEarlyDetect } from './lib/location'
+import { detectHomePlace, onQuickPlace, queryGeolocationPermission, subscribeGeolocationPermission, takeEarlyDetect } from './lib/location'
 import {
   BROADER,
   CITIES,
@@ -1290,6 +1290,11 @@ export default function App() {
 
   useEffect(() => {
     if (!hydrated) return
+    const unsubQuick = onQuickPlace(home => {
+      applyDetectedHome(home, true)
+      markTabLocationOk()
+      setDetecting(false)
+    })
     void queryGeolocationPermission().then(state => {
       if (state === 'granted') applySavedHome()
     })
@@ -1313,6 +1318,7 @@ export default function App() {
     document.addEventListener('visibilitychange', onReturn)
     window.addEventListener('focus', onReturn)
     return () => {
+      unsubQuick()
       unsub()
       document.removeEventListener('visibilitychange', onReturn)
       window.removeEventListener('focus', onReturn)
