@@ -709,12 +709,12 @@ function ShelfRow({ title, stories, onOpen }: { title: string; stories: StoryCar
   )
 }
 
-function searchStories(edition: NewsPayload, query: string, topic: string, home?: HomePlace, focus: string[] = []) {
+function searchStories(edition: NewsPayload, query: string, home?: HomePlace, focus: string[] = []) {
   const q = query.trim().toLowerCase()
+  if (!q) return []
   return orderedShelves(edition.shelves, home, focus)
-    .filter(s => topic === 'All' || shelfTitle(s.label) === topic)
     .flatMap(s => s.stories)
-    .filter(s => !q || `${s.headline} ${s.summary} ${s.category} ${s.shelf} ${sourceName(s)}`.toLowerCase().includes(q))
+    .filter(s => `${s.headline} ${s.summary} ${s.category} ${s.shelf} ${sourceName(s)}`.toLowerCase().includes(q))
 }
 
 function HomePage({
@@ -737,12 +737,10 @@ function HomePage({
   const [audioOn, setAudioOn] = useState(false)
   const [audioBusy, setAudioBusy] = useState(false)
   const [query, setQuery] = useState('')
-  const [topic, setTopic] = useState('All')
   const speech = useRef<SpeechHandle | null>(null)
   const rows = orderedShelves(edition.shelves, home, focus)
-  const labels = ['All', ...rows.map(s => shelfTitle(s.label))]
-  const searching = Boolean(query.trim()) || topic !== 'All'
-  const results = searching ? searchStories(edition, query, topic, home, focus) : []
+  const searching = Boolean(query.trim())
+  const results = searching ? searchStories(edition, query, home, focus) : []
 
   useEffect(() => () => speech.current?.stop(), [])
   useEffect(() => {
@@ -838,13 +836,6 @@ function HomePage({
                   style={{ background: 'var(--input)', color: 'var(--ink)', border: '1px solid var(--border-strong)' }}
                 />
               </label>
-              <div className="flex gap-2 overflow-x-auto scrollbar-none mt-4 pb-0.5 -mx-1 px-1">
-                {labels.map(label => (
-                  <span key={label} className="shrink-0">
-                    <Tag label={label} active={topic === label} onClick={() => setTopic(label)} />
-                  </span>
-                ))}
-              </div>
             </div>
           </div>
         </div>
