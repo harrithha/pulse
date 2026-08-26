@@ -8,7 +8,6 @@ export const config = {
 
 export default async function handler(req: IncomingMessage, res: ServerResponse) {
   await handleTts(req, res, {
-    speechifyKey: process.env.SPEECHIFY_API_KEY,
-    speechifyVoice: process.env.SPEECHIFY_VOICE_ID,
+    voice: process.env.TTS_VOICE,
   })
 }
