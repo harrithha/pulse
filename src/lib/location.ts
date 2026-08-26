@@ -1,7 +1,7 @@
 import { matchHomePlace, matchHomePlaceFromCoords, type HomePlace, type RawPlace } from './places'
 
-const GPS_TIMEOUT_MS = 8_000
-const GEOCODE_TIMEOUT_MS = 3_000
+const GPS_TIMEOUT_MS = 5_000
+const GEOCODE_TIMEOUT_MS = 2_000
 
 async function fetchJson(url: string, signal: AbortSignal) {
   const res = await fetch(url, { signal })
@@ -19,43 +19,11 @@ function gpsCoords(): Promise<{ lat: number; lon: number } | null> {
       resolve(null)
       return
     }
-    let settled = false
-    let watchId: number | undefined
-    const finish = (coords: { lat: number; lon: number } | null) => {
-      if (settled) return
-      settled = true
-      if (watchId != null) navigator.geolocation.clearWatch(watchId)
-      resolve(coords)
-    }
-
-    const onOk = (pos: GeolocationPosition) => {
-      finish({ lat: pos.coords.latitude, lon: pos.coords.longitude })
-    }
-
-    // Cached / coarse fix — often ready the moment permission is granted.
-    navigator.geolocation.getCurrentPosition(onOk, () => {}, {
-      enableHighAccuracy: false,
-      timeout: 1_200,
-      maximumAge: Infinity,
-    })
-
-    try {
-      watchId = navigator.geolocation.watchPosition(
-        onOk,
-        err => {
-          if (err.code === err.PERMISSION_DENIED) finish(null)
-        },
-        { enableHighAccuracy: false, timeout: GPS_TIMEOUT_MS, maximumAge: 60_000 },
-      )
-    } catch {
-      navigator.geolocation.getCurrentPosition(onOk, () => finish(null), {
-        enableHighAccuracy: false,
-        timeout: GPS_TIMEOUT_MS,
-        maximumAge: 60_000,
-      })
-    }
-
-    window.setTimeout(() => finish(null), GPS_TIMEOUT_MS)
+    navigator.geolocation.getCurrentPosition(
+      pos => resolve({ lat: pos.coords.latitude, lon: pos.coords.longitude }),
+      () => resolve(null),
+      { enableHighAccuracy: false, timeout: GPS_TIMEOUT_MS, maximumAge: 10 * 60 * 1000 },
+    )
   })
 }
 
@@ -126,3 +94,18 @@ export async function detectHomePlace(): Promise<HomePlace | null> {
   if (named.city || named.state) return named
   return null
 }
+
+let earlyDetect: Promise<HomePlace | null> | undefined
+
+/** Start GPS as soon as the app boots, before React hydrates. */
+export function prefetchHomePlace() {
+  if (typeof navigator === 'undefined' || !navigator.geolocation) return
+  earlyDetect ??= detectHomePlace()
+}
+
+export function takeEarlyDetect() {
+  prefetchHomePlace()
+  return earlyDetect ?? detectHomePlace()
+}
+
+prefetchHomePlace()

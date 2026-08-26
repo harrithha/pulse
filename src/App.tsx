@@ -2,7 +2,7 @@ import { useEffect, useId, useRef, useState, type ReactNode } from 'react'
 import { emptyEdition, getCachedStoryArticle, loadEdition, prefetchStoryArticle, readCachedEdition } from './lib/news'
 import { isFullArticle } from './lib/articleExtract'
 import { cleanArticleParagraphs } from './lib/articleText'
-import { detectHomePlace, queryGeolocationPermission, subscribeGeolocationPermission } from './lib/location'
+import { detectHomePlace, queryGeolocationPermission, subscribeGeolocationPermission, takeEarlyDetect } from './lib/location'
 import {
   BROADER,
   CITIES,
@@ -1241,11 +1241,18 @@ export default function App() {
 
   const detectGen = useRef(0)
   const gpsRetries = useRef(0)
+  const usedEarlyDetect = useRef(false)
+  const detectInflight = useRef(false)
   const runDetect = (fromRetry = false) => {
+    if (detectInflight.current && !fromRetry) return
     if (!fromRetry) gpsRetries.current = 0
     const gen = ++detectGen.current
+    detectInflight.current = true
     setDetecting(true)
-    void detectHomePlace()
+    const task = !fromRetry && !usedEarlyDetect.current
+      ? (usedEarlyDetect.current = true, takeEarlyDetect())
+      : detectHomePlace()
+    void task
       .then(async found => {
         if (gen !== detectGen.current) return false
         if (found) {
@@ -1261,14 +1268,16 @@ export default function App() {
           window.setTimeout(() => {
             if (detectGen.current !== gen) return
             runDetectRef.current(true)
-          }, 500)
+          }, 200)
           return true
         }
         if (state !== 'granted') applyWorldDefault()
         return false
       })
       .then(retrying => {
-        if (gen === detectGen.current && !retrying) setDetecting(false)
+        if (gen !== detectGen.current) return
+        detectInflight.current = false
+        if (!retrying) setDetecting(false)
       })
   }
   const runDetectRef = useRef(runDetect)
@@ -1276,19 +1285,7 @@ export default function App() {
 
   useEffect(() => {
     if (!hydrated) return
-    let cancelled = false
-
-    const detectIfAllowed = async () => {
-      const state = await queryGeolocationPermission()
-      if (cancelled) return
-      if (state === 'denied') {
-        applyWorldDefault()
-        return
-      }
-      runDetectRef.current()
-    }
-
-    void detectIfAllowed()
+    runDetectRef.current()
     const unsub = subscribeGeolocationPermission(state => {
       if (state === 'granted') runDetectRef.current()
       if (state === 'denied') applyWorldDefault()
@@ -1302,7 +1299,6 @@ export default function App() {
     document.addEventListener('visibilitychange', onReturn)
     window.addEventListener('focus', onReturn)
     return () => {
-      cancelled = true
       unsub()
       document.removeEventListener('visibilitychange', onReturn)
       window.removeEventListener('focus', onReturn)
